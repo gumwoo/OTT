@@ -1,9 +1,12 @@
 version: 2
+# 커밋 접두어를 정하지 않으면 chore(deps)가 붙어 PR 제목 검사(GH-04)에 걸린다
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: ci
     groups:
       actions:
         patterns: ["*"]
@@ -12,6 +15,8 @@ updates:
     directory: /api
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore(api)
     groups:
       gradle:
         patterns: ["*"]
@@ -20,6 +25,8 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore(web)
     groups:
       npm:
         patterns: ["*"]
@@ -28,6 +35,8 @@ updates:
     directory: /transcoder
     schedule:
       interval: weekly
+    commit-message:
+      prefix: chore(transcoder)
     groups:
       uv:
         patterns: ["*"]
