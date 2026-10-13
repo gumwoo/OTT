@@ -11,24 +11,9 @@
 
 ## 구조
 
-```mermaid
-flowchart TB
-  P[플레이어<br/>hls.js + QoE] -->|재생 요청, 영상 요청 + Signed Cookie| CF
-  subgraph CF[CloudFront]
-    F[Function + KVS<br/>국가 정책]
-  end
-  CF -->|/api/*| API
-  CF -->|/content/*| S3[(S3 content<br/>버전 경로 불변)]
-  subgraph EKS
-    API[인증 API<br/>Spring Boot]
-    JOB[변환 Job<br/>FFmpeg]
-  end
-  API --- DB[(PostgreSQL)]
-  JOB -->|게시 요청| API
-  JOB -->|검증 후 업로드| S3
-```
+![구조도](docs/images/architecture.drawio.svg)
 
-자세한 그림과 근거는 [docs/design.md](docs/design.md) §3.
+계획된 구성이다. 아직 배포하지 않았다. 그림 파일은 draw.io에서 그대로 열어 고칠 수 있고, 자세한 흐름과 근거는 [docs/design.md](docs/design.md) §3.
 
 ## 핵심 결정
 
