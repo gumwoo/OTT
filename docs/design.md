@@ -209,6 +209,23 @@ ffmpeg 출력은 실행할 때마다 바이트 단위로 같다는 보장이 없
 - 업로드를 시작하기 전에 **그 버전 경로에 객체가 하나라도 있으면 업로드하지 않고 `FAILED`(`VERSION_DIRTY`)로 끝낸다.**
 - Kubernetes Job의 자동 재시도는 끈다 (`backoffLimit: 0`). 재시도는 운영자가 **새 버전으로 다시 요청**한다.
 - 버전 번호는 재사용하지 않으므로, 반쯤 올라간 버전 경로는 다시 쓰이지 않고 정리 대상이 된다.
+- `backoffLimit: 0`이어도 같은 프로그램이 두 번 시작될 수 있다 (Kubernetes Job 문서). 사전 점검(`VERSION_DIRTY`)만으로는 "확인 → 업로드" 사이의 경쟁을 막지 못한다. **최종 방어는 객체마다의 `If-None-Match`**다. 업로드 중 412를 받으면 다른 실행이 끼어든 것으로 보고 중단한다.
+
+### 노드 drain 정책 [선택]
+
+`backoffLimit: 0`이면 노드 drain 한 번에 Job이 실패한다. `podFailurePolicy`의 `DisruptionTarget`을 `Ignore`로 두면 Kubernetes가 새 Pod로 다시 실행한다.
+
+- 다시 실행되는 Pod도 같은 버전 경로를 쓴다. 업로드 전에 drain됐다면 경로가 비어 있어 정상 완료되고, 업로드 중에 drain됐다면 `VERSION_DIRTY`로 안전하게 실패한다. 즉 Ignore로 바꿔도 **산출물이 섞이지는 않는다.**
+- 그래도 1단계에서는 **drain도 실패로 처리하는 현행 정책을 유지**한다. 재시도 경로가 두 가지(Kubernetes 자동, 운영자 수동)가 되면 E9에서 실패 원인과 복구 경로를 해석하기 어려워진다.
+- E9에서 drain 빈도와 재요청 비용을 측정한 뒤 `podFailurePolicy` 도입을 다시 판단한다.
+
+### 업로드 응답 유실과 412 [가설]
+
+S3 업로드는 성공했는데 응답이 유실되면 boto3가 자동 재시도하고, 두 번째 시도는 **내가 방금 올린 객체 때문에** 412를 받을 수 있다. 지금 규칙대로면 정상 업로드가 `VERSION_DIRTY`로 판정된다.
+
+- 아직 재현하지 않은 시나리오다. 규칙으로 확정하기 전에 재현 테스트로 확인한다.
+- 체크섬만으로는 "내가 올린 것"을 증명할 수 없다. 다른 실행이 같은 바이트를 올렸을 수도 있다.
+- 비교할 후보: 업로드 시 객체 메타데이터에 `job-id`와 실행 시도 ID(Pod 시작마다 생성하는 UUID)를 함께 기록하고, 412를 받으면 `HeadObject`로 메타데이터를 확인해서 **같은 시도 ID일 때만** 성공으로 본다. boto3 재시도를 줄이는 설정(`total_max_attempts`)과 함께 비교한다.
 
 ### Job 실행 자원 [설계]
 
@@ -218,6 +235,13 @@ ffmpeg 출력은 실행할 때마다 바이트 단위로 같다는 보장이 없
 - 필요량 산정: 원본 크기 + 화질별 출력 합계 + ffmpeg 임시 파일. 테스트 영상으로 실측해서 정한다.
 - **노드 디스크 크기**도 함께 정한다. Job의 요청량만 설정하면 노드 자체 공간이 부족해서 스케줄되지 않을 수 있다.
 - 디스크가 부족할 때 Job이 어떻게 실패하고 어떤 기록이 남는지는 E9에서 확인한다.
+- [가설] 디스크 사용량이 `ephemeral-storage` 한도를 넘으면 쓰기 오류(ENOSPC)보다 **Pod eviction이 먼저** 올 수 있다. 그러면 `DISK_FULL`이 보고되지 않고 heartbeat 끊김으로 `LOST`가 된다. 재현 테스트로 확인하고, 필요하면 Job이 한도보다 작은 자체 예산으로 디스크 여유를 사전·주기 점검하도록 한다.
+
+### 컨테이너 종료 신호 [확인]
+
+- 컨테이너의 PID 1 프로세스는 핸들러를 등록한 신호만 받는다. Python이 PID 1인데 SIGTERM 핸들러가 없으면 신호가 무시되고, grace period(기본 30초) 뒤 SIGKILL로 죽는다. 이때 실패 보고와 ffmpeg 자식 종료가 모두 빠진다.
+- 그래서 transcoder는 SIGTERM 핸들러를 직접 등록하고, 진입점은 셸 래퍼 없이 Python을 직접 실행한다 (CONVENTIONS PY-06·PY-07).
+- grace period 안에 ffmpeg 종료, `FAILED` 보고, heartbeat 정지가 끝나도록 각 단계 타임아웃을 합산해 정한다.
 
 ### 작업 생존 확인 (heartbeat) [설계]
 
@@ -620,7 +644,7 @@ S3 원본 등록 → EKS Job 변환 → 산출물 검증 → 불변 버전 경�
 | E6 | 잘못된 정책 배포를 감지·복구할 수 있는가 | 의도적 오설정 (허용 누락 / 잘못 허용) | 감지 시간, 롤백 전파 시간, False Allow 수 | Runbook·Postmortem 작성 |
 | E7 | 트랜스코딩이 API에 영향을 주는가 | 격리 없음 vs 배치 노드 분리 + Taint/Toleration + 리소스 요청량 | 변환 중 API p50/p95·오류율 | **영향이 관측되지 않으면 "격리 효과"를 주장하지 않고, 격리가 필요한 조건을 찾지 못했다고 기록** |
 | E8 | 변환 작업이 몰릴 때 확장·축소되는가 | 동시 Job 수 | Pending → Running 시간, 노드 추가·제거 시각, 변환 1건당 비용 | 기준선 Cluster Autoscaler. Karpenter는 선택 |
-| E9 | 변환 중 Pod·노드가 죽으면 **실패를 감지하고 안전하게 재실행할 수 있는가** | ① 변환 중 Pod 삭제 ② **업로드 중** Pod 삭제 ③ 노드 종료 ④ 디스크 부족(`ephemeral-storage` 초과) ⑤ 같은 버전으로 재실행 ⑥ 응답 유실 후 publish 재요청 | 장애 발생 → `FAILED` 확정까지 시간(특히 ①③의 `LOST` 감지 시간), 실패 원인 코드, 미완성 버전 경로 잔존 여부와 정리 시각, **불완전 산출물 공개 건수**, **한 버전 안의 산출물 혼합 여부**, 새 버전 재요청 후 완료까지 시간 | 자동 변환 복구가 아니라 **감지 + 운영자 재실행**을 평가한다. 불완전 산출물 공개와 산출물 혼합은 0이어야 함. ⑤는 `VERSION_DIRTY`, ⑥은 포인터 변경 없이 같은 성공 결과 |
+| E9 | 변환 중 Pod·노드가 죽으면 **실패를 감지하고 안전하게 재실행할 수 있는가** | ① 변환 중 Pod 삭제 ② **업로드 중** Pod 삭제 ③ 노드 종료·drain ④ 디스크 부족(`ephemeral-storage` 초과: ENOSPC인지 eviction인지 확인) ⑤ 같은 버전으로 재실행 ⑥ 응답 유실 후 publish 재요청 ⑦ S3 업로드 응답 유실 후 SDK 재시도(412 오탐 재현) ⑧ SIGTERM 시 ffmpeg 자식 종료·`FAILED` 보고 | 장애 발생 → `FAILED` 확정까지 시간(특히 ①③의 `LOST` 감지 시간), 실패 원인 코드, 미완성 버전 경로 잔존 여부와 정리 시각, **불완전 산출물 공개 건수**, **한 버전 안의 산출물 혼합 여부**, 새 버전 재요청 후 완료까지 시간 | 자동 변환 복구가 아니라 **감지 + 운영자 재실행**을 평가한다. 불완전 산출물 공개와 산출물 혼합은 0이어야 함. ⑤는 `VERSION_DIRTY`, ⑥은 포인터 변경 없이 같은 성공 결과 |
 
 E5의 시간 기준:
 
@@ -704,12 +728,30 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
   → **종량제**를 쓴다.
 - VPC origin: ALB·NLB·EC2를 private subnet에 둘 수 있다. VPC에 IGW가 필요하다. 서비스 관리형 SG는 VPC origin 생성 후에 만들어진다. Lambda@Edge origin 트리거는 지원하지 않는다. 서울·자카르타 리전 지원.
 
+### Terraform·Kubernetes·Argo CD [확인]
+
+조사 원문: [research/2026-10-13-infra-k8s.md](research/2026-10-13-infra-k8s.md)
+
+- S3 backend의 네이티브 락(`use_lockfile`)은 Terraform 1.10에서 실험 기능으로 들어왔고 **1.11에서 정식**이 됐다. DynamoDB 락 인자는 같은 릴리스에서 deprecated. → `required_version >= 1.11` (현재 `infra/base`의 `>= 1.9`는 골격 정리 때 올린다).
+- Kubernetes Job은 `parallelism=1`, `completions=1`이어도 같은 프로그램이 두 번 시작될 수 있다.
+- `activeDeadlineSeconds`는 `backoffLimit`보다 우선한다. `ttlSecondsAfterFinished`로 Job이 지워지면 로그와 상태도 사라지므로, 결과는 DB에 먼저 기록한다.
+- AWS Load Balancer Controller의 `TargetGroupBinding`은 Terraform이 만든 Target Group을 **완전히 제어**한다. 클러스터에 없는 타깃은 등록 해제하므로 그 Target Group을 다른 용도와 공유하지 않는다. compute를 철거할 때는 TargetGroupBinding(Argo 앱)을 먼저 지우고 Terraform destroy를 한다.
+- Argo CD v3부터 기본 리소스 추적 방식은 **annotation**(`argocd.argoproj.io/tracking-id`)이다. CLI로 만든 Job에 Helm 공통 라벨이 있어도 추적 annotation이 없으면 앱 리소스로 보지 않는다. 기본값 변경에 대비해 `argocd-cm`에 `annotation`을 명시한다 (CONVENTIONS K8-09).
+- 자동 동기화를 켠 Argo CD 앱은 Argo CD에서 Rollback할 수 없다. 롤백은 Git revert로 한다.
+
+### Service selector와 Job Pod [가설, 예방 규칙 채택]
+
+TargetGroupBinding은 Service selector로 고른 Pod를 ALB 타깃으로 등록한다. 변환 Job Pod가 API Service selector와 같은 라벨(`name`, `instance`)을 가지면 **Job Pod가 API 트래픽을 받을 수 있다** (Service 동작 원리에서 추론, 재현하지 않음).
+
+- 예방 비용이 작으므로 규칙으로 채택한다: 모든 워크로드에 `app.kubernetes.io/component`(`api`·`transcoder`·`ops-check`)를 붙이고, Service·PDB selector에 `component`를 반드시 포함한다 (CONVENTIONS K8-02).
+- 매니페스트 검사로 강제하고, kind에서 "selector가 API Pod만 고르는지"를 확인한다.
+
 ### 확인 필요
 
 - S3 request metrics와 server access logs는 best-effort다. 정확한 카운트가 필요하면 계측 프록시를 쓴다.
-- Kubernetes Job은 `parallelism=1`, `completions=1`이어도 같은 프로그램이 두 번 시작될 수 있다.
-- AWS Load Balancer Controller의 `TargetGroupBinding`으로 Terraform이 만든 Target Group에 Service를 연결할 수 있다.
-- Argo CD 자동 동기화 상태에서 직접 Rollback 제한, 추적 라벨이 붙은 리소스의 prune 동작.
+- `podFailurePolicy`와 `restartPolicy: Never`의 제약, ephemeral-storage 초과 eviction이 `DisruptionTarget`으로 분류되는지.
+- emptyDir `sizeLimit` 초과 시 eviction에 grace period가 적용되는지.
+- EKS Pod Identity와 `automountServiceAccountToken: false`의 호환성.
 
 ### 확인 완료 (S3·CloudFront) [확인]
 

@@ -4,7 +4,7 @@
 
 CloudFront 캐시 효율을 유지하면서 국가별 배포 정책을 어떻게 집행할지, EKS에서 API랑 FFmpeg 변환 Job을 같이 돌릴 때 어떤 문제가 생기는지 직접 실험해 보는 게 목적이다.
 
-설계는 [docs/design.md](docs/design.md), 기술 선택 이유는 [docs/adr](docs/adr/)에 정리해 둠.
+설계는 [docs/design.md](docs/design.md)·[docs/app-design.md](docs/app-design.md), 기술 선택 이유는 [docs/adr](docs/adr/), 개발 규칙은 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)에 정리해 둠.
 
 ## 진행 상황
 

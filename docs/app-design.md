@@ -26,12 +26,18 @@
 
 | 영역 | 선택 |
 |---|---|
-| API | Spring Boot (Java 17), Spring Security, Spring Data JPA, Flyway, PostgreSQL |
+| API | **Spring Boot 4.1 / Spring Security 7.1** (Java 17), Spring Data JPA, Flyway, PostgreSQL. Jackson 3 |
 | 세션 | 서버 세션 + **Spring Session JDBC** (아래 §5) |
-| 프론트 | TypeScript, React, Vite, React Router, TanStack Query, hls.js, Tailwind CSS |
-| 프론트 테스트 | Vitest(단위), Playwright(E2E) |
-| API 테스트 | JUnit 5, Testcontainers(PostgreSQL) |
-| 변환 Job | Python + ffmpeg 컨테이너. 지금 있는 `media/` 스크립트를 그대로 핵심 로직으로 쓴다 |
+| API 품질 | spring-javaformat, Checkstyle(최소 규칙), ArchUnit, JaCoCo |
+| 프론트 | TypeScript `~6.0`, React 19, Vite, **React Router 8 (Data mode)**, TanStack Query 5, hls.js, Tailwind CSS 4 |
+| 프론트 품질 | ESLint 9 (typescript-eslint type-checked, react-hooks, TanStack Query, jsx-a11y), Prettier |
+| 프론트 테스트 | Vitest(단위), MSW(API 모킹), Playwright(E2E) |
+| API 테스트 | JUnit 5, Testcontainers 2 (PostgreSQL) |
+| 변환 Job | Python(uv, Ruff, mypy strict) + ffmpeg 컨테이너. 지금 있는 `media/` 스크립트를 핵심 로직으로 옮긴다 |
+
+- Boot 3.5는 OSS 지원이 2026-06에 끝나서 4.1을 기준으로 한다. 인터넷의 Boot 3 기준 예제(Jackson 2 패키지, Testcontainers 1.x 클래스 이름)는 그대로 쓰면 깨진다.
+- TypeScript 7과 ESLint 10은 조사일 기준으로 연동 도구가 지원하지 않아 고정한다.
+- 버전 조합은 골격을 만들 때 최소 프로젝트로 빌드해서 확인한다. 규칙 전체는 [CONVENTIONS.md](CONVENTIONS.md).
 
 ## 3. 저장소 구조
 
@@ -95,16 +101,47 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
 
 모든 쿠키는 `Secure; SameSite=Lax`.
 
+쿠키 경로 설정 방법 [확인]:
+
+- **`server.servlet.context-path`는 쓰지 않는다.** CSRF 쿠키 경로의 기본값이 context path라서, `/api`로 두면 `XSRF-TOKEN`도 `/api`로 가고 화면의 JS가 읽지 못한다. `/api` 접두어는 컨트롤러 매핑과 CloudFront 경로로 붙인다.
+- 세션 쿠키 경로만 `server.servlet.session.cookie.path=/api`로 좁힌다 (`http-only`, `secure`, `same-site=lax`도 같은 속성 그룹).
+- Spring Session은 `spring-boot-starter-session-jdbc` 자동설정을 쓴다. **`@EnableJdbcHttpSession`을 붙이지 않는다.** 붙이면 자동설정이 꺼져 위 쿠키 속성 매핑도 사라진다.
+- 세션 테이블은 Flyway 마이그레이션으로 관리하고 `spring.session.jdbc.initialize-schema=never`로 둔다.
+
 ### CSRF 흐름
 
-단일 도메인이라 CORS는 없지만 쿠키로 인증하므로 CSRF 보호가 필요하다. Spring Security 6의 SPA용 설정(쿠키 기반 토큰 저장 + SPA 요청 처리)을 공식 문서 기준으로 쓴다. 정확한 설정 방법은 고정할 Spring Security 버전 문서로 확인한다. [확인 필요]
+단일 도메인이라 CORS는 없지만 쿠키로 인증하므로 CSRF 보호가 필요하다. Spring Security 7의 `http.csrf(csrf -> csrf.spa())`를 쓴다 [확인]. 이 한 줄이 JS가 읽을 수 있는 쿠키 저장소와 SPA용 요청 처리를 함께 설정한다. 인증 성공과 로그아웃 때 CSRF 쿠키가 지워지므로 아래 3번이 필요하다.
 
-1. **앱 시작 시** 프론트가 `GET /api/csrf`를 호출해서 `XSRF-TOKEN` 쿠키를 받는다 (로그인 화면도 POST를 보내므로 처음부터 필요하다).
+1. **앱 시작 시** 프론트가 `GET /api/csrf`(permitAll)를 호출해서 `XSRF-TOKEN` 쿠키를 받는다 (로그인 화면도 POST를 보내므로 처음부터 필요하다).
 2. 이후 모든 변경 요청(POST·PUT·PATCH·DELETE)에 `X-XSRF-TOKEN` 헤더로 쿠키 값을 보낸다.
-3. **로그인·로그아웃 직후**에는 토큰이 바뀌거나 지워질 수 있으므로 `GET /api/csrf`를 다시 호출한다.
-4. 세션이 만료돼 401이 오면 로그인 화면으로 보내고, 그 화면에서 1부터 다시 한다. 403(CSRF 실패)이면 토큰을 한 번 다시 받아 요청을 한 번만 재시도한다.
+3. **로그인·로그아웃 직후**에는 토큰이 지워지므로 `GET /api/csrf`를 다시 호출한다.
+4. 세션이 만료돼 401이 오면 로그인 화면으로 보내고, 그 화면에서 1부터 다시 한다. 403 `CSRF_INVALID`면 토큰을 한 번 다시 받아 요청을 한 번만 재시도한다.
 
-- `/internal/*`은 브라우저가 호출하지 않고 쿠키도 쓰지 않으므로 CSRF 검사에서 제외한다 (ServiceAccount 토큰으로 인증).
+- `/internal/*`은 별도 `SecurityFilterChain`으로 분리한다: `securityMatcher("/internal/**")`, STATELESS, 이 체인에서만 CSRF 비활성, ServiceAccount 토큰(TokenReview) 인증. 세션 쿠키로 `/internal`을 호출하거나 Bearer 토큰으로 `/api`를 호출하면 401이어야 한다.
+
+### 보안 필터 단계의 오류 응답 [확인]
+
+401·403·CSRF 실패는 보안 필터에서 응답이 나가서 `@RestControllerAdvice`를 거치지 않는다. 또 formLogin·httpBasic을 쓰지 않으면 미인증 요청의 기본 응답은 **401이 아니라 403**이다. 그대로 두면 프론트가 "로그인 필요", "CSRF 실패", "구독 부족"을 구분할 수 없다.
+
+| 상황 | 처리 위치 | 응답 |
+|---|---|---|
+| 미인증 | `AuthenticationEntryPoint` | 401 `UNAUTHENTICATED` |
+| CSRF 토큰 없음·불일치 | `AccessDeniedHandler` (`CsrfException` 계열 판별) | 403 `CSRF_INVALID` |
+| 권한 없음 (ADMIN 전용 등) | `AccessDeniedHandler` | 403 `FORBIDDEN` |
+| 구독 등급 부족 | 서비스 예외 → advice | 403 `PLAN_REQUIRED` |
+
+세 경로 모두 §6의 ProblemDetail 형식으로 응답한다.
+
+### JSON 로그인
+
+formLogin 대신 `POST /api/auth/login`(JSON) 컨트롤러로 로그인한다. 공식 문서 예시는 `authenticate()` 후 `SecurityContextRepository.saveContext()`를 직접 호출하는 데까지만 다룬다.
+
+1. `AuthenticationManager.authenticate()`
+2. **세션 ID 변경** (세션 고정 공격 방어)
+3. `SecurityContextRepository.saveContext()`
+4. 응답 후 프론트가 CSRF 토큰을 다시 받는다 (§5 CSRF 흐름 3)
+
+- [가설] 2번을 직접 해야 하는지(수동 로그인에서 프레임워크가 세션 전략을 호출해 주지 않는지)는 문서에 없다. "로그인 전후 세션 ID가 다른지"를 통합 테스트로 확인하고, 다르지 않으면 직접 변경한다.
 
 ## 6. API
 
@@ -187,13 +224,26 @@ publish 응답:
 - 인증은 ServiceAccount 토큰 + TokenReview. 인증 로직은 인터페이스로 두고, `local` 프로필에서만 고정 개발용 토큰 구현으로 바꾼다.
 - **운영에서 개발용 구현이 켜지지 않게** 막는다. 개발용 구현은 `local` 프로필에서만 빈으로 등록되고, 운영 프로필에서 개발용 토큰 설정이 감지되면 기동을 실패시킨다.
 
-### 오류 응답 형식
+### 오류 응답 형식 (결정: 2026-10-13)
+
+RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: application/problem+json`.
 
 ```json
-{ "code": "PLAN_REQUIRED", "message": "PREMIUM 구독이 필요합니다" }
+{
+  "type": "about:blank",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "PREMIUM 구독이 필요합니다",
+  "instance": "/api/contents/movie-100/playback",
+  "code": "PLAN_REQUIRED"
+}
 ```
 
-코드는 enum으로 관리하고, 프론트는 `code`로 분기한다.
+- 사람이 읽는 메시지는 `detail`이다. 프론트는 `code`로만 분기하고 `detail`은 표시용으로만 쓴다.
+- `enum ErrorCode(HttpStatus status, String defaultDetail)`로 코드를 관리한다. 도메인 예외는 `ApiException extends ErrorResponseException` 하나를 통해서만 만든다.
+- `@RestControllerAdvice` 하나가 `ResponseEntityExceptionHandler`를 상속해서 Spring 내장 예외(400 검증 실패, 404, 405, 415)에도 `code`를 붙인다. `spring.mvc.problemdetails.enabled`는 켜지 않는다 (핸들러 중복 방지).
+- 보안 필터 단계의 401·403은 §5 "보안 필터 단계의 오류 응답"에서 같은 형식으로 만든다.
+- 이 형식을 선택한 이유: 기존 `{code, message}`를 고수하면 Spring 내장 예외를 전부 직접 매핑해야 한다. 표준 형식에 `code`만 더하면 프레임워크 경로와 맞물린다.
 
 ## 7. Signed Cookie 서명
 
@@ -221,7 +271,11 @@ publish 응답:
 - **staging 버킷은 두지 않는다** (결정: 2026-10-13). content 버킷이 `CopyObject`를 막기 때문에 게시는 어차피 로컬 파일을 직접 올리는 방식이고, 검증도 로컬 디스크에서 끝난다. 대신 실패한 작업의 로그와 실패 원인 코드는 반드시 남긴다.
 - **Kubernetes 자동 재시도는 끈다** (`backoffLimit: 0`). 재시도한 Pod가 처음부터 다시 변환하면, 이미 올라간 1차 결과와 2차 결과가 한 버전 안에 섞일 수 있다. ffmpeg 출력은 실행마다 바이트 단위로 같다는 보장이 없다. 재시도는 운영자가 **새 버전으로 다시 요청**한다 (design.md §4).
 - Job 이름은 `transcode-{contentId}-v{n}`. 새 버전으로 재요청하면 이름도 달라지므로 이전 Job 객체가 남아 있어도 충돌하지 않는다.
-- **heartbeat**: 별도 스레드가 주기적으로 `POST /internal/jobs/{id}/heartbeat`를 보낸다. 응답이 409(이미 `FAILED`)면 ffmpeg와 업로드를 즉시 중단하고 종료한다.
+- **heartbeat**: 별도 스레드(non-daemon, `threading.Event`로 정지)가 주기적으로 `POST /internal/jobs/{id}/heartbeat`를 보낸다. 응답이 409(이미 `FAILED`)면 ffmpeg와 업로드를 즉시 중단하고 종료한다.
+  - heartbeat API의 409는 "즉시 중단"이고, S3 `PutObject`의 409(`ConditionalRequestConflict`)는 AWS 문서상 "재시도 가능"이다. 코드에서 두 409를 구분한다.
+- **S3 업로드는 `put_object(IfNoneMatch="*")`를 직접 호출한다.** boto3의 `upload_file`은 `IfNoneMatch`를 넘길 수 없다 [확인, 소스 기준]. 412는 HTTP 상태 코드로 판별한다. 응답 유실 후 재시도에서 오는 412 오탐은 design.md §4 "업로드 응답 유실과 412" [가설]을 따른다.
+- **종료 신호**: SIGTERM 핸들러를 메인 스레드에서 등록하고, ffmpeg 자식을 직접 종료한 뒤 `FAILED`를 보고한다. 컨테이너 진입점은 셸 래퍼 없이 Python을 직접 실행한다 (design.md §4 "컨테이너 종료 신호").
+- ffmpeg는 인자 리스트로 실행하고 `shell=True`를 쓰지 않는다. stderr를 PIPE로 받아 `wait()`하면 교착될 수 있으므로 파일로 리다이렉트하거나 별도 스레드에서 읽는다.
 - **`activeDeadlineSeconds`**로 최대 실행 시간을 건다. 네트워크만 끊겨 heartbeat가 닿지 않는 경우에도 Kubernetes가 확실히 종료시킨다. 미완성 버전 정리는 이 시간보다 충분히 지난 뒤에만 한다.
 - Pod가 비정상 종료(OOMKilled, 노드 종료)되면 Job은 아무것도 보고하지 못한다. 이때 `FAILED(LOST)` 확정은 운영 CronJob이 heartbeat 기준으로 한다.
 - 디스크: `emptyDir`(sizeLimit) + `ephemeral-storage` 요청·제한. 필요량은 원본 + 화질별 출력 + ffmpeg 임시 파일로 산정하고 테스트 영상으로 실측한다. 노드 디스크 크기도 함께 정한다. 부족하면 `FAILED(DISK_FULL)`.
@@ -238,10 +292,17 @@ publish 응답:
 | `/contents/:id` | 상세 + 재생 |
 | `/account` | 내 구독 |
 
-- 서버 상태는 TanStack Query로만 관리한다. 전역 상태 라이브러리는 두지 않는다.
+- 폴더 구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼, `ApiError`, CSRF), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`.
+- 서버 상태는 TanStack Query로만 관리한다. 전역 상태 라이브러리는 두지 않는다. 모든 query는 `queryOptions()` + feature별 key factory로 정의한다.
+- **React Router 8 Data mode** (`createBrowserRouter`, `react-router/dom`의 `RouterProvider`). v8에서 `react-router-dom` 패키지가 없어졌다. 인증이 필요한 화면은 레이아웃 라우트의 middleware에서 `/api/me`를 확인하고 없으면 `/login`으로 보낸다.
 - 플레이어는 기존 `player/qoe.js` 로직을 훅(`usePlayback`, `useQoe`)으로 옮긴다. 재생 시작 → refresh 타이머 → 종료 시 QoE 보고.
-- API 클라이언트가 CSRF 토큰을 헤더에 붙이고, 오류는 `code`로 처리한다. 앱 시작 시와 로그인·로그아웃 직후 `GET /api/csrf`를 호출한다 (§5 CSRF 흐름).
+  - hls.js 인스턴스는 effect 안에서 만들고 cleanup에서 `destroy()`한다. 개발 모드(StrictMode)에서 두 번 생성·파괴되는 것이 정상이며, ref로 막지 않는다.
+  - **QoE 전송은 `fetch(..., { keepalive: true })`**를 쓰고, 화면을 떠날 때(`visibilitychange` hidden) 남은 이벤트를 보낸다. `navigator.sendBeacon`은 헤더를 붙일 수 없어서 CSRF 헤더가 필요한 `/api/qoe`로 보낼 수 없다 [확인]. keepalive 요청은 64KiB 제한이 있으므로 배치 크기를 그 안으로 유지한다.
+- API 클라이언트가 CSRF 토큰을 헤더에 붙이고, 오류는 ProblemDetail의 `code`로 처리한다. 앱 시작 시와 로그인·로그아웃 직후 `GET /api/csrf`를 호출한다 (§5 CSRF 흐름).
+  - 4xx는 재시도하지 않고 화면에서 `code`로 분기한다. 5xx만 Error Boundary로 보낸다.
+  - `/api/me`는 401이면 에러가 아니라 `null`(로그인 안 됨)로 취급한다.
 - 빌드 결과물(`dist/`)은 app 버킷에 올린다. 기존 `player/`는 이 앱으로 대체한다.
+- 플레이어 E2E는 Playwright의 **chrome 채널**로 돌린다. 기본 번들 Chromium에는 일부 코덱이 없어 H.264 재생 확인이 실패할 수 있다.
 
 ## 10. 로컬 개발 환경
 
@@ -303,9 +364,15 @@ Docker Compose만으로는 Kubernetes TokenReview·RBAC를 재현할 수 없고,
 | heartbeat 끊긴 RUNNING 작업 | CronJob이 `FAILED(LOST)` 확정. 이후 heartbeat는 409 |
 | QoE를 남의 `session_id`로 보고 | 404 |
 | ADMIN 초기화를 두 프로세스가 동시에 실행 | 계정 1개만 생성 |
-| CSRF: 토큰 없이 POST, 로그인 직후 이전 토큰으로 POST | 403. 프론트는 토큰을 다시 받아 한 번만 재시도 |
+| CSRF: 토큰 없이 POST, 로그인 직후 이전 토큰으로 POST | 403 `CSRF_INVALID`. 프론트는 토큰을 다시 받아 한 번만 재시도 |
 | 세션 쿠키가 `/content/*` 요청에 붙는지 | 붙지 않음 (Path `/api`) |
+| `Set-Cookie` 경로 | `SESSION ... Path=/api`, `XSRF-TOKEN ... Path=/` |
 | PREMIUM 만료 후 PREMIUM 콘텐츠 재생·refresh | 403 `PLAN_REQUIRED` |
+| 오류 응답 계약: 401, 403(CSRF·권한·구독), 400(검증), 404, 405, 500 | 모두 ProblemDetail + `code` |
+| 로그인 전후 세션 ID | 달라야 함 (세션 고정 방어) |
+| 세션 쿠키로 `/internal/*`, Bearer 토큰으로 `/api/*` | 401 |
+| transcoder: SIGTERM 수신 | ffmpeg 자식 종료, `FAILED` 보고, heartbeat 정지가 grace period 안에 끝남 |
+| transcoder: 업로드 중 412 | 중단, `FAILED(VERSION_DIRTY)` |
 | QoE 계산 | Vitest |
 | 가입 → 구독 → 재생 시작 | Playwright (로컬 전체 구동) |
 
@@ -313,6 +380,7 @@ Docker Compose만으로는 Kubernetes TokenReview·RBAC를 재현할 수 없고,
 
 AWS 없이 할 수 있는 것부터 한다.
 
+0. 모듈별 골격 + 품질 도구 연결 (CONVENTIONS §2 버전 조합을 최소 프로젝트로 빌드해서 확인, 의도적 위반 코드로 검사가 실제로 막는지 확인)
 1. `api` 뼈대: 스키마, 가입·로그인·세션, 구독
 2. 카탈로그, 재생 API, Signed Cookie 서명
 3. `web`: 화면 4개, 플레이어 이전, QoE 보고
