@@ -60,6 +60,8 @@
 | transcoder | Python 3.13, uv 0.13.0, Ruff 0.17.0, mypy 2.4.0, pytest 9.1.1 | |
 | infra | Terraform 1.16.5(CI), tflint 0.64.0, trivy 0.75.0 | 로컬 Terraform 1.9.8은 apply 전에 올려야 한다 |
 
+호환성 때문에 묶어 둔 버전(ESLint 9, TS 6.0, `@types/node` 24)은 `.github/dependabot.yml`의 `ignore`에도 넣는다. 빠뜨리면 Dependabot이 올려서 CI가 깨진다 (#7).
+
 ## 3. 저장소 공통 (GEN)
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
