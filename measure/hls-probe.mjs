@@ -83,7 +83,14 @@ async function timedGet(url, ctx, kind) {
     throw new ProbeFailure('NETWORK_ERROR', kind, path, null);
   }
   const ttfbMs = performance.now() - started;
-  const body = await res.arrayBuffer();
+  // 헤더를 받은 뒤 본문을 받는 도중에도 연결이 끊길 수 있다. 이 경우도 실패 기록을 남긴다.
+  let body = null;
+  let bodyError = false;
+  try {
+    body = await res.arrayBuffer();
+  } catch {
+    bodyError = true;
+  }
   const totalMs = performance.now() - started;
 
   const record = {
@@ -96,8 +103,8 @@ async function timedGet(url, ctx, kind) {
     kind,
     path,
     status: res.status,
-    ok: res.status === EXPECTED_STATUS,
-    bytes: body.byteLength,
+    ok: res.status === EXPECTED_STATUS && !bodyError,
+    bytes: body === null ? null : body.byteLength,
     ttfbMs: Math.round(ttfbMs * 10) / 10,
     totalMs: Math.round(totalMs * 10) / 10,
     xCache: res.headers.get('x-cache'),
@@ -106,6 +113,7 @@ async function timedGet(url, ctx, kind) {
     cfId: res.headers.get('x-amz-cf-id')
   };
   ctx.records.push(record);
+  if (bodyError) throw new ProbeFailure('BODY_READ_ERROR', kind, path, res.status);
   if (!record.ok) throw new ProbeFailure('UNEXPECTED_STATUS', kind, path, res.status);
   return { res, text: () => new TextDecoder().decode(body) };
 }
@@ -141,8 +149,11 @@ async function main() {
       if (firstSegmentDoneMs === null) firstSegmentDoneMs = performance.now() - started;
     }
   } catch (err) {
-    if (!(err instanceof ProbeFailure)) throw err;
-    failure = { reason: err.reason, kind: err.kind, path: err.path, status: err.status };
+    // 예상하지 못한 예외도 요약을 남긴 뒤 실패로 끝낸다. 측정 기록이 사라지지 않게 하기 위해서다.
+    failure =
+      err instanceof ProbeFailure
+        ? { reason: err.reason, kind: err.kind, path: err.path, status: err.status }
+        : { reason: 'UNEXPECTED_ERROR', kind: null, path: null, status: null, message: String(err?.message ?? err) };
   }
 
   const ok = failure === null;
