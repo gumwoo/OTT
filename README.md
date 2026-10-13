@@ -1,73 +1,39 @@
-# Global OTT Streaming & Content Rights Platform
+# OTT
 
-국가별 콘텐츠 배포 정책을 CDN 캐시 효율을 유지하면서 집행하고, 상시 API와 트랜스코딩 배치를 Kubernetes에서 운영·검증하는 프로젝트.
+국가마다 볼 수 있는 콘텐츠가 다른 VOD 서비스를 AWS에서 만들어 보는 개인 프로젝트.
 
-- 설계: [docs/design.md](docs/design.md)
-- 결정 기록: [docs/adr/](docs/adr/)
-- 현재 단계: **0단계** (스트리밍·관측·보안 기본선, EKS 없음)
+CloudFront 캐시 효율을 유지하면서 국가별 배포 정책을 어떻게 집행할지, EKS에서 API랑 FFmpeg 변환 Job을 같이 돌릴 때 어떤 문제가 생기는지 직접 실험해 보는 게 목적이다.
 
-## 구조
+설계는 [docs/design.md](docs/design.md), 기술 선택 이유는 [docs/adr](docs/adr/)에 정리해 둠.
 
+## 진행 상황
+
+- [x] 설계
+- [ ] 0단계: HLS 변환, S3 + CloudFront, 재생 품질 측정 (코드 작성 중, 배포 전)
+- [ ] 1단계: EKS에 인증 API + 변환 Job
+- [ ] 2단계: CloudFront Functions + KVS로 국가별 정책
+- [ ] 3단계: 정책 배포 파이프라인, 전파 지연 측정
+- [ ] 4단계: 변환 Job 장애·확장 실험
+
+## 폴더
+
+- `infra/base` - Terraform (S3, CloudFront, 예산 알람, GitHub OIDC)
+- `media` - ffmpeg HLS 변환, 결과 검증, S3 업로드 스크립트
+- `player` - hls.js 플레이어. 시작 시간, 버퍼링, 화질 전환을 같이 기록함
+- `measure` - CloudFront 캐시 Hit/Miss랑 응답 시간 재는 스크립트
+
+## 로컬에서 돌려보기
+
+ffmpeg, Python 3.10+, Node 20+ 필요.
+
+```bash
+# out/movie-100/v1 에 HLS 파일 생성
+bash media/transcode.sh <영상 파일> movie-100 1
+
+# 변환 결과만 따로 검증
+python media/validate_hls.py out/movie-100/v1
 ```
-infra/base/     Terraform base 스택 (S3, CloudFront, OAC, Functions, 예산 알람, GitHub OIDC)
-media/          HLS 변환(transcode.sh), 산출물 검증(validate_hls.py), 업로드(seed.sh)
-player/         hls.js 플레이어 + QoE 측정(qoe.js)
-measure/        요청 단위 측정 클라이언트(hls-probe.mjs)
-docs/           설계 문서, ADR
-```
 
-## 0단계 실행 순서
+테스트 영상은 Blender 오픈 무비(Tears of Steel 등, CC-BY)를 씀.
 
-필요한 도구: Terraform ≥ 1.9, AWS CLI v2, ffmpeg/ffprobe, Node.js ≥ 20, Python ≥ 3.10, Bash(Git Bash 가능)
-
-1. 인프라
-
-   ```bash
-   cd infra/base
-   cp terraform.tfvars.example terraform.tfvars   # budget_email 등 수정
-   terraform init
-   terraform plan
-   terraform apply
-   ```
-
-2. 국가 헤더 스모크 테스트 (2단계 설계의 전제 확인)
-
-   ```bash
-   curl -s "$(terraform -chdir=infra/base output -raw geo_probe_url)"
-   ```
-
-   `"headerPresent": true`여야 한다. `false`면 2단계 국가 정책 설계를 시작 전에 다시 검토한다.
-
-3. 변환 → 검증 → 업로드
-
-   샘플 영상은 Blender 오픈 무비(CC-BY)를 쓴다. 예: Tears of Steel.
-
-   ```bash
-   bash media/transcode.sh <원본 파일> movie-100 1
-   bash media/seed.sh out/movie-100/v1 "$(terraform -chdir=infra/base output -raw content_bucket)" content/movie-100/v1
-   ```
-
-4. 플레이어 배포
-
-   ```bash
-   aws s3 sync player/ "s3://$(terraform -chdir=infra/base output -raw app_bucket)/" --delete
-   ```
-
-   `https://<distribution_domain>/?autoplay=1` 에서 재생과 QoE 수치를 확인한다.
-
-5. E2 cold/warm 측정
-
-   같은 산출물을 실행마다 새 prefix로 올려 cold 상태를 만든다 (invalidation을 쓰지 않는다).
-
-   ```bash
-   bash media/seed.sh out/movie-100/v1 <content_bucket> content/movie-100/runs/run-001
-   node measure/hls-probe.mjs --url https://<domain>/content/movie-100/runs/run-001/master.m3u8 \
-     --location seoul --label cold --out results/e2.jsonl
-   node measure/hls-probe.mjs --url https://<domain>/content/movie-100/runs/run-001/master.m3u8 \
-     --location seoul --label warm --out results/e2.jsonl
-   ```
-
-## 0단계 완료 기준
-
-- 같은 영상에 대해 cold/warm 캐시와 네트워크 조건별 차이를 수치로 설명할 수 있다.
-- `terraform destroy → apply → 시딩`으로 같은 환경을 재현할 수 있다.
+AWS 배포 방법은 실험 들어갈 때 정리할 예정.

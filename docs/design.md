@@ -87,7 +87,7 @@
    ├─ Cache (cache key = 경로, 국가 헤더 제외)
    └─ /content/* ── OAC ──▶ [S3 content 버킷: 불변 버전 경로]
 
-[Media Pipeline]  S3 source → Transcode Job → S3 staging → 검증 → S3 content(v{n}) → 공개 포인터 갱신
+[Media Pipeline]  S3 source → Transcode Job(로컬 디스크에서 변환·검증) → S3 content(v{n}) → 공개 포인터 갱신
 [Policy Pipeline] policies/*.yaml → PR CI 검증 → 승인 → KVS 반영 → Synthetic 검증
 [Observability]   QoE · CloudFront 로그 · S3 지표 · API·클러스터 지표 → 대시보드/알람
 ```
@@ -139,7 +139,7 @@ CloudFront는 cache behavior를 **나열된 순서대로 비교해 첫 번째로
 | 구성 요소 | 책임 |
 |---|---|
 | Authorization API | 사용자별 콘텐츠 자격 판단, Signed Cookie 발급, 공개 버전 조회, 공개 포인터 갱신 |
-| Transcode Job | 원본 → HLS 변환, staging 기록, 산출물 검증, 불변 경로 게시 |
+| Transcode Job | 원본 → HLS 변환, 로컬 산출물 검증, 불변 경로 업로드 |
 | CloudFront 서명 검증 | Cookie의 서명·만료·Resource 범위 검증 |
 | Viewer Request Function + KVS | 콘텐츠별 국가 배포 정책, 계약 기간 |
 | S3 + OAC | 원본 직접 접근 차단 |
@@ -154,8 +154,8 @@ CloudFront는 cache behavior를 **나열된 순서대로 비교해 첫 번째로
 s3://<source>/movie-100/original.mp4                     원본 (CLI로 등록)
         │  Transcode Job 생성 (1단계: CLI·GitHub Actions)
         ▼
-s3://<staging>/movie-100/{jobId}/...                     변환 중간·결과. CloudFront origin이 아님
-        │  산출물 검증
+Pod 로컬 디스크 (emptyDir)                               변환·검증. 검증 전 산출물은 S3 어디에도 올라가지 않음
+        │  산출물 검증 통과
         ▼
 s3://<content>/content/movie-100/v{n}/master.m3u8        불변 버전 경로 (If-None-Match로 덮어쓰기 금지)
 s3://<content>/content/movie-100/v{n}/{variant}_{nnnnn}.ts         (variant playlist는 {variant}.m3u8)
@@ -166,11 +166,13 @@ PostgreSQL: content.current_version = v{n}
 GET /api/content/movie-100/playback → https://<host>/content/movie-100/v{n}/master.m3u8
 ```
 
-- **staging과 content를 버킷으로 분리**해서, 검증되지 않은 산출물이 CloudFront를 통해 노출될 경로 자체를 없앤다.
+- **staging 버킷은 두지 않는다** (app-design.md §8). content 버킷이 `CopyObject`를 막으므로 게시는 어차피 Job의 로컬 파일을 직접 올리는 방식이고, 검증도 로컬 디스크에서 끝난다. 검증되지 않은 산출물은 Pod 밖으로 나가지 않는다.
+- 대신 업로드 도중 실패하면 **공개되지 않은 미완성 버전**이 content 버킷에 남을 수 있다. 이 버전에는 Signed Cookie가 발급되지 않으므로 접근은 막히고, 정리는 CronJob이 한다 (§10 1단계).
+- Pod가 죽으면 로컬 산출물은 사라진다. 다시 변환할 수 있도록 **원본(source 버킷)과 작업 기록(DB, 실패 원인 포함)**을 남긴다.
 - **공개는 객체 덮어쓰기가 아니라 포인터 전환**이다. `/content/movie-100/current/...`처럼 고정 URL을 덮어쓰면 캐시 TTL·무효화 문제를 다시 다뤄야 하고, 캐시에 남은 이전 세그먼트와 새 세그먼트가 섞일 수 있다.
 - manifest 안의 variant·segment 참조는 **상대 경로**로 둔다. 그래야 버전 디렉터리째로 옮겨도 동작한다.
 - **Signed Cookie는 공개 버전 단위로 발급한다.** Resource는 `https://<host>/content/movie-100/v{n}/*`이고, API는 `current_version`에 대해서만 Cookie를 발급한다. 와일드카드는 Resource 어디에나 쓸 수 있다 [확인].
-  - 이유: 콘텐츠 단위 Resource(`/content/movie-100/*`)를 쓰면 v1 Cookie로 **아직 공개되지 않은 v2 경로**에도 접근할 수 있다. v2를 content 버킷으로 복사하는 도중이라면 일부 세그먼트만 있는 상태가 노출된다. 버전 이름(`v1`, `v2`)은 추측할 수 있으므로 URL을 알리지 않는 것은 방어가 아니다.
+  - 이유: 콘텐츠 단위 Resource(`/content/movie-100/*`)를 쓰면 v1 Cookie로 **아직 공개되지 않은 v2 경로**에도 접근할 수 있다. v2를 content 버킷에 업로드하는 도중이라면 일부 세그먼트만 있는 상태가 노출된다. 버전 이름(`v1`, `v2`)은 추측할 수 있으므로 URL을 알리지 않는 것은 방어가 아니다.
   - 보장하는 범위: **신규 재생 권한은 현재 공개된 버전에 대해서만 발급한다. 기존 재생 세션은 발급받은 버전에 대해 Cookie 만료 전까지 접근할 수 있다.** 따라서 공개된 적 없는 버전(복사 중인 v2 등)에는 어떤 Cookie로도 접근할 수 없다.
   - 공개 전환 후에도 v1 Cookie로 하는 재생은 Cookie 만료 전까지 계속된다. 롤백(`current_version`을 이전 버전으로 되돌림) 후에는 새 Cookie가 발급된다.
 
@@ -186,13 +188,48 @@ Kubernetes Job은 `parallelism=1`, `completions=1`이어도 같은 프로그램�
 
 | 계층 | 담당하는 것 |
 |---|---|
-| 결정적 Job 이름 `transcode-{contentId}-{원본 해시 앞자리}-p{프로파일 버전}` | 같은 작업의 중복 **요청** 완화 (보조 수단) |
-| 작업 식별자 = 원본 해시 + 변환 프로파일 버전 | 같은 입력·같은 설정인지 판단 |
+| Kubernetes Job 이름 `transcode-{contentId}-v{n}` | **버전마다 고유.** 같은 버전으로 Job을 두 번 만드는 것을 Kubernetes 수준에서 막는다 (보조 수단) |
+| 논리적 작업 식별자 = 원본 해시 + 변환 프로파일 버전 (DB) | 같은 입력·같은 설정인지 판단. Job 이름에는 넣지 않는다 |
 | 불변 S3 객체 (`If-None-Match: *` 조건부 쓰기 + **버킷 정책으로 강제** [확인]) | 완성된 산출물의 덮어쓰기 방지. 이미 있으면 412. 헤더 없는 쓰기는 누가 하든 거부 |
 | 게시 상태 기록 (PostgreSQL) | 어떤 버전이 검증·공개됐는지 관리 |
-| 조건부 공개 전환 | 중복 완료나 늦게 끝난 작업이 최신 공개 버전을 덮지 못하게 방지 |
+| 단조 증가 공개 전환 | 중복 완료나 늦게 끝난 작업이 최신 공개 버전을 덮지 못하게 방지 (아래 "버전 할당과 게시 트랜잭션") |
 
-- 조건부 공개 전환: `UPDATE content SET current_version = :new WHERE id = :id AND current_version = :expected`. 영향받은 행이 0이면 공개하지 않고 기록만 남긴다.
+- Job 이름에 원본 해시·프로파일을 넣지 않는 이유: 실패하면 **같은 원본·같은 프로파일을 새 버전으로** 다시 요청한다. 이름이 해시 기반이면 v3과 v4의 Job 이름이 같아져서, 첫 Job이 아직 정리되지 않았을 때 두 번째 생성이 충돌한다.
+
+### 재시도와 산출물 혼합 방지 [설계]
+
+staging이 없으면 다음 문제가 생긴다.
+
+1. Job이 v3의 segment를 절반쯤 올리고 죽는다.
+2. 재시도한 Pod가 처음부터 다시 변환하고, 이미 있는 파일은 412로 건너뛰고 나머지만 올린다.
+3. v3 안에 **1차 변환의 앞부분과 2차 변환의 뒷부분이 섞인다.**
+
+ffmpeg 출력은 실행할 때마다 바이트 단위로 같다는 보장이 없다. 키프레임 위치는 맞춰도 세그먼트 내용·길이가 미세하게 다를 수 있고, 게시 검증("파일이 다 있는가")은 이 상태를 통과시킨다. 그래서:
+
+- 업로드를 시작하기 전에 **그 버전 경로에 객체가 하나라도 있으면 업로드하지 않고 `FAILED`(`VERSION_DIRTY`)로 끝낸다.**
+- Kubernetes Job의 자동 재시도는 끈다 (`backoffLimit: 0`). 재시도는 운영자가 **새 버전으로 다시 요청**한다.
+- 버전 번호는 재사용하지 않으므로, 반쯤 올라간 버전 경로는 다시 쓰이지 않고 정리 대상이 된다.
+
+### Job 실행 자원 [설계]
+
+변환 파일이 전부 Pod 로컬 디스크에 생기므로 CPU·메모리와 함께 **디스크**를 지정한다.
+
+- `emptyDir`(sizeLimit) + `resources.requests/limits.ephemeral-storage`
+- 필요량 산정: 원본 크기 + 화질별 출력 합계 + ffmpeg 임시 파일. 테스트 영상으로 실측해서 정한다.
+- **노드 디스크 크기**도 함께 정한다. Job의 요청량만 설정하면 노드 자체 공간이 부족해서 스케줄되지 않을 수 있다.
+- 디스크가 부족할 때 Job이 어떻게 실패하고 어떤 기록이 남는지는 E9에서 확인한다.
+
+### 작업 생존 확인 (heartbeat) [설계]
+
+Pod가 OOMKilled되거나 노드가 갑자기 종료되면 Job은 `FAILED`를 보고할 기회가 없다. 그러면 DB에는 `RUNNING`이 계속 남고, 정리 규칙(`FAILED`만 대상)도 그 버전을 건드리지 못한다.
+
+- Job은 실행 중 **주기적으로 heartbeat**를 보낸다 (`transcode_jobs.heartbeat_at` 갱신). ffmpeg가 도는 동안에도 별도 스레드에서 보낸다.
+- 운영 CronJob이 `REQUESTED` 이후 진행 상태(`RUNNING`·`VALIDATED`·`UPLOADED`)에서 **heartbeat가 일정 시간 이상 끊긴 작업을 `FAILED(LOST)`로 확정**한다.
+- 이 방식은 Kubernetes API 읽기 권한이 필요 없고, Job 객체가 TTL로 이미 삭제된 뒤에도 동작한다. Kubernetes Job 상태와의 대조는 원인 기록을 보강하는 용도로만 쓴다 (선택).
+- **네트워크만 끊기고 Pod는 살아 있는 경우**: DB에서는 `LOST`로 확정됐는데 Pod가 계속 업로드할 수 있다. 게시는 상태 검사에서 거부되므로 공개되지는 않는다. 정리 후에 파일이 다시 생기는 것을 막기 위해:
+  - Job에 `activeDeadlineSeconds`(최대 실행 시간)를 걸어 Kubernetes가 확실히 종료하게 한다.
+  - 미완성 버전 정리는 `FAILED` 확정 후 **`activeDeadlineSeconds`보다 충분히 긴 시간이 지난 뒤**에만 한다.
+- 이 프로젝트가 증명하는 것은 **자동 변환 복구가 아니라, 실패를 감지하고 운영자가 새 버전으로 안전하게 재실행하는 것**이다. E9도 이 기준으로 평가한다.
 
 ### 버전 할당과 게시 트랜잭션 [설계]
 
@@ -202,15 +239,25 @@ Kubernetes Job은 `parallelism=1`, `completions=1`이어도 같은 프로그램�
 
 ```
 BEGIN
-  SELECT ... FROM transcode_job WHERE id = :jobId FOR UPDATE   -- 상태 COPIED, 해시·프로파일·버전 일치 확인
-  UPDATE content SET current_version = :v
-   WHERE id = :contentId AND current_version = :expected      -- 1행이 아니면 ROLLBACK
+  SELECT ... FROM transcode_job WHERE id = :jobId FOR UPDATE
+    -- PUBLISHED면: 아무것도 바꾸지 않고 COMMIT, 기존 성공 결과 반환 (응답 유실 후 재요청)
+    -- UPLOADED가 아니면: 거부
+    -- 해시·프로파일·버전 불일치: 거부
+  SELECT current_version FROM content WHERE id = :contentId FOR UPDATE
+    -- current_version이 NULL이거나 :v보다 작을 때만 전환
+    -- 이미 :v 이상이면: 포인터를 바꾸지 않고 작업만 PUBLISHED_SUPERSEDED로 기록
+  UPDATE content SET current_version = :v WHERE id = :contentId
   UPDATE transcode_job SET status = 'PUBLISHED' WHERE id = :jobId
 COMMIT
 ```
 
+- **공개 전환은 단조 증가 규칙을 따른다**: 새 버전이 현재 공개 버전보다 클 때만 바꾼다. 현재 공개 버전이 없으면(`NULL`, 첫 게시) 바꾼다.
+  - 이전 초안의 `WHERE current_version = :expected`는 첫 게시에서 `NULL = NULL`이 참이 아니라서 **항상 실패**했다. 또 `:expected`를 누가 정하는지도 없었다. content 행을 잠그고 읽은 뒤 규칙으로 판단하는 방식으로 바꿨다.
+  - 늦게 끝난 v4가 이미 공개된 v5를 덮지 못한다.
+- **이전 버전으로 되돌리는 롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`). 대상 버전은 한 번 공개된 적 있는 버전만 허용한다.
 - S3 산출물 확인(manifest·segment 존재)은 DB 잠금을 오래 잡지 않도록 **트랜잭션 시작 전에** 한다. 버전 경로는 불변이므로 확인 후 트랜잭션 사이에 내용이 바뀌지 않는다.
-- 트랜잭션 도중 API가 죽으면 전체가 롤백되고 작업은 `COPIED`로 남는다. 같은 publish 요청을 다시 보내면 처음부터 다시 판단한다 (멱등).
+- 트랜잭션 도중 API가 죽으면 전체가 롤백되고 작업은 `UPLOADED`로 남는다. 같은 publish 요청을 다시 보내면 처음부터 다시 판단한다.
+- 커밋은 됐는데 응답이 유실돼서 Job이 다시 요청하면, 작업이 이미 `PUBLISHED`이므로 **포인터를 건드리지 않고 같은 성공 결과를 돌려준다.** 그사이 다른 버전이 공개됐더라도 이전 작업이 포인터를 되돌리지 않는다.
 - 공개 포인터 갱신은 Job이 DB에 직접 쓰지 않고 **API의 publish 엔드포인트**를 호출한다. DB의 소유자는 API 하나로 유지한다.
 
 ### 작업 상태와 게시 검증 [설계]
@@ -218,14 +265,16 @@ COMMIT
 변환 작업은 DB의 `transcode_job` 테이블에 등록하고 상태를 관리한다.
 
 ```
-REQUESTED → RUNNING → VALIDATED → COPIED → PUBLISHED
-               │          │          │
-               └──────────┴──────────┴──→ FAILED
+REQUESTED → RUNNING → VALIDATED → UPLOADED → PUBLISHED
+               │          │           │
+               └──────────┴───────────┴──→ FAILED
 ```
 
-- `VALIDATED`: staging 산출물 검증 통과 (Job이 보고)
-- `COPIED`: content 버킷의 `v{n}`으로 복사 완료 (Job이 보고)
+- `VALIDATED`: Pod 로컬 디스크의 산출물 검증 통과 (Job이 보고)
+- `UPLOADED`: content 버킷의 `v{n}`으로 업로드 완료 (Job이 보고)
 - `PUBLISHED`: API가 직접 확인하고 `current_version`을 바꾼 상태
+- `PUBLISHED_SUPERSEDED`: 검증은 통과했지만 이미 더 높은 버전이 공개돼 있어서 포인터를 바꾸지 않은 상태. 롤백 대상이 될 수 있으므로 정리하지 않는다
+- `FAILED`: 실패 단계와 원인 코드(`VERSION_DIRTY`, `DISK_FULL`, `SOURCE_HASH_MISMATCH`, `VALIDATION_FAILED`, `LOST` 등)를 함께 기록. `LOST`는 heartbeat가 끊겨 CronJob이 확정한 경우
 
 publish 요청을 받으면 API는 다음을 **모두** 확인한다.
 
@@ -233,14 +282,14 @@ publish 요청을 받으면 API는 다음을 **모두** 확인한다.
 |---|---|
 | TokenReview 결과의 `authenticated`, `audiences`, ServiceAccount namespace·name | **누가** 호출했는가 |
 | 요청의 `jobId`·원본 해시·프로파일 버전이 등록된 작업과 일치 | 등록되지 않은 작업이나 다른 작업의 산출물을 게시하지 못하게 |
-| 작업 상태가 `COPIED` | 복사가 끝나지 않은 작업을 게시하지 못하게 |
-| **API가 직접** content 버킷의 `v{n}` manifest를 읽고 참조된 segment가 모두 존재하는지 확인 | Job의 자기 보고만 믿지 않음. 복사가 일부만 된 버전을 게시하지 못하게 |
-| `current_version` 조건부 갱신이 실제로 1행을 바꿨는지 | 늦게 끝난 작업이 최신 공개 버전을 덮지 못하게 |
+| 작업 상태가 `UPLOADED` | 업로드가 끝나지 않은 작업을 게시하지 못하게 |
+| **API가 직접** content 버킷의 `v{n}` manifest를 읽고 참조된 segment가 모두 존재하는지 확인 | Job의 자기 보고만 믿지 않음. 업로드가 일부만 된 버전을 게시하지 못하게 |
+| 단조 증가 규칙 (현재 공개 버전보다 클 때만 전환) | 늦게 끝난 작업이 최신 공개 버전을 덮지 못하게 |
 
 - 원칙: **ServiceAccount 토큰은 누가 호출했는지, DB 작업 상태와 산출물 확인은 무엇을 게시할 수 있는지** 검증한다.
 - Authorization API의 ServiceAccount에는 `tokenreviews` 생성 권한(RBAC)이 필요하다. Helm 차트에 ClusterRole·Binding으로 명시한다.
 - API는 content 버킷에 **읽기 권한만** 가진다 (EKS Pod Identity). 쓰기는 `transcoder`만 가진다.
-- 1단계는 **결정적 Job 이름 + 불변 산출물 + 게시 전 검증 + 조건부 공개 전환**으로 시작한다. 추가 방어가 필요한지는 4단계 장애 실험(E9)에서 확인한다.
+- 1단계는 **버전별 Job 이름 + 불변 산출물 + 게시 전 검증 + 단조 증가 공개 전환 + heartbeat**로 시작한다. 추가 방어가 필요한지는 4단계 장애 실험(E9)에서 확인한다.
 
 ### publish 엔드포인트의 접근 경계 [설계]
 
@@ -497,9 +546,14 @@ rev 14  롤백 = 내용 X를 새 순번으로 배포
 - EKS (2 AZ, Managed Node Group), internal ALB + VPC origin + TargetGroupBinding (ADR-0011)
 - Authorization API (Deployment), RDS PostgreSQL Single-AZ
 - 공개 버전별 Signed Cookie 발급, 만료 전 갱신, `/api/qoe`
-- CronJob은 1단계에서 **하나만** 둔다: 공개 버전 무결성 점검 (모든 `current_version`이 완전한 버전 경로를 가리키는지) + 오래된 staging 정리
-  - staging 정리는 **DB 작업 상태 기준**으로만 한다. `PUBLISHED`·`FAILED`이고 마지막 갱신 후 일정 시간이 지난 작업의 staging 경로만 삭제한다. `REQUESTED`·`RUNNING`·`VALIDATED`·`COPIED` 작업이 참조하는 경로는 오래됐어도 삭제하지 않는다
-- **Transcode Job**: 원본 등록 → Job 변환 → staging → 검증 → 불변 버전 경로 게시 → 조건부 공개 전환 (§4)
+- CronJob은 1단계에서 **하나만** 둔다. 하는 일은 순서대로 세 가지다.
+  1. **생존 확인**: heartbeat가 끊긴 진행 중 작업을 `FAILED(LOST)`로 확정 (§4 "작업 생존 확인")
+  2. **공개 버전 무결성 점검**: 모든 `current_version`이 완전한 버전 경로를 가리키는지
+  3. **미완성 버전 정리**
+     - 정리 대상은 **DB 작업 상태 기준**으로만 고른다. 작업이 `FAILED`이고, 확정 후 **Job의 `activeDeadlineSeconds`보다 충분히 긴 시간**이 지났으며, **한 번도 `current_version`이 된 적 없는** 버전 경로만 삭제한다.
+     - `REQUESTED`·`RUNNING`·`VALIDATED`·`UPLOADED` 작업의 버전 경로는 오래됐어도 삭제하지 않는다 (heartbeat가 끊겼다면 1에서 먼저 `LOST`로 바뀐다). `PUBLISHED`·`PUBLISHED_SUPERSEDED`와 공개된 적 있는 버전은 롤백 대상이므로 삭제하지 않는다.
+     - content 버킷 정책은 `PutObject`만 제한하므로 삭제는 가능하다. 삭제 권한은 이 CronJob의 ServiceAccount에만 준다.
+- **Transcode Job**: 원본 등록 → Job이 로컬에서 변환·검증 → 불변 버전 경로 업로드 → 단조 증가 공개 전환 (§4)
 - 워크로드 유형별 기본 템플릿 (Deployment용, Job용): Probe, 리소스 요청·제한, 보안 컨텍스트, 재시도·타임아웃 기본값. 템플릿 설정을 CI에서 자동 검증한다
 - 도메인 구성 결정 (ADR-0008)
 - 정상·비정상 접근 매트릭스. **manifest뿐 아니라 모든 segment·variant 경로가 보호되는지** 확인한다
@@ -566,7 +620,7 @@ S3 원본 등록 → EKS Job 변환 → 산출물 검증 → 불변 버전 경�
 | E6 | 잘못된 정책 배포를 감지·복구할 수 있는가 | 의도적 오설정 (허용 누락 / 잘못 허용) | 감지 시간, 롤백 전파 시간, False Allow 수 | Runbook·Postmortem 작성 |
 | E7 | 트랜스코딩이 API에 영향을 주는가 | 격리 없음 vs 배치 노드 분리 + Taint/Toleration + 리소스 요청량 | 변환 중 API p50/p95·오류율 | **영향이 관측되지 않으면 "격리 효과"를 주장하지 않고, 격리가 필요한 조건을 찾지 못했다고 기록** |
 | E8 | 변환 작업이 몰릴 때 확장·축소되는가 | 동시 Job 수 | Pending → Running 시간, 노드 추가·제거 시각, 변환 1건당 비용 | 기준선 Cluster Autoscaler. Karpenter는 선택 |
-| E9 | 변환 중 Pod·노드가 죽으면 무엇이 남는가 | Pod 삭제, 노드 종료 | 재시도 여부·횟수, 최종 완료 여부, 중복 실행 여부, **불완전 산출물 공개 건수**, 실패 원인 추적 가능 여부 | 불완전 산출물 공개 건수는 0이어야 함 |
+| E9 | 변환 중 Pod·노드가 죽으면 **실패를 감지하고 안전하게 재실행할 수 있는가** | ① 변환 중 Pod 삭제 ② **업로드 중** Pod 삭제 ③ 노드 종료 ④ 디스크 부족(`ephemeral-storage` 초과) ⑤ 같은 버전으로 재실행 ⑥ 응답 유실 후 publish 재요청 | 장애 발생 → `FAILED` 확정까지 시간(특히 ①③의 `LOST` 감지 시간), 실패 원인 코드, 미완성 버전 경로 잔존 여부와 정리 시각, **불완전 산출물 공개 건수**, **한 버전 안의 산출물 혼합 여부**, 새 버전 재요청 후 완료까지 시간 | 자동 변환 복구가 아니라 **감지 + 운영자 재실행**을 평가한다. 불완전 산출물 공개와 산출물 혼합은 0이어야 함. ⑤는 `VERSION_DIRTY`, ⑥은 포인터 변경 없이 같은 성공 결과 |
 
 E5의 시간 기준:
 
@@ -615,12 +669,16 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 | **v1 Cookie로 v2 경로 요청** (v2 복사 중·공개 전) | 거부 |
 | v1 → v2 공개 전환 후 재생 시작 | v2 Cookie 발급. 기존 v1 세션은 Cookie 만료 전까지 재생 유지 |
 | 버전 전환 반복 후 브라우저 Cookie | 이전 버전 Cookie 누적 수와 만료·삭제 동작 기록 |
-| 같은 콘텐츠의 작업 2개 동시 등록 | 서로 다른 버전 할당 |
+| 같은 콘텐츠의 작업 2개 동시 등록 | 서로 다른 버전 할당, 서로 다른 Job 이름 |
 | 게시 트랜잭션 도중 API 강제 종료 | `current_version`과 작업 상태가 함께 롤백. 재요청 시 정상 게시 |
+| **첫 게시** (`current_version`이 NULL) | 정상 전환 |
+| 게시 커밋 후 같은 publish 재요청 | 포인터 변경 없이 같은 성공 결과 |
+| v5 공개 후 늦게 끝난 v4 publish | 포인터 유지, v4는 `PUBLISHED_SUPERSEDED` |
+| 실행 중 Job의 Pod 강제 삭제 | heartbeat 끊김 → CronJob이 `FAILED(LOST)` 확정 → 기한 후 미완성 버전 정리 |
 | `enable_api=false` 상태에서 `/api/*` 요청 | `503 API_MAINTENANCE` (index.html 200이 아님) |
-| 실행 중 작업의 오래된 staging 경로 | CronJob이 삭제하지 않음 |
-| `COPIED`가 아닌 작업, 등록되지 않은 jobId, segment가 빠진 버전으로 publish | 거부, 작업 상태 기록 |
-| staging 버킷 경로를 CloudFront로 요청 | 도달 불가 |
+| 실행 중 작업의 버전 경로, 공개된 적 있는 버전 경로 | CronJob이 삭제하지 않음 |
+| `UPLOADED`가 아닌 작업, 등록되지 않은 jobId, segment가 빠진 버전으로 publish | 거부, 작업 상태 기록 |
+| 이미 객체가 있는 버전 경로로 Job 실행 | 업로드하지 않고 `FAILED(VERSION_DIRTY)` |
 | CloudFront 경유 `/internal/*`, `/api/../internal/*`, 인코딩 변형 | publish 불가 |
 | 토큰 없이 또는 다른 ServiceAccount 토큰으로 클러스터 내부에서 publish 호출 | 401·403 |
 | `transcoder` ServiceAccount로 publish 호출 | 성공 (조건부 갱신 규칙 적용) |
@@ -657,7 +715,7 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 
 - S3 `If-None-Match: *` 조건부 쓰기는 `PutObject`, `CompleteMultipartUpload`, `CopyObject`에서 쓸 수 있고, 같은 키가 있으면 412로 실패한다.
 - 버킷 정책(`s3:if-none-match` 조건 키)으로 조건부 쓰기를 **강제**할 수 있다. 단, 강제한 경로에는 `CopyObject`를 쓸 수 없다 (헤더 없으면 403, 있으면 501).
-  → content 버킷은 정책으로 강제하고, staging → content 게시는 **`CopyObject`가 아니라 Job이 가진 로컬 산출물을 `PutObject(If-None-Match: *)`로 올리는 방식**으로 한다.
+  → content 버킷은 정책으로 강제하고, 게시는 **`CopyObject`가 아니라 Job이 가진 로컬 산출물을 `PutObject(If-None-Match: *)`로 올리는 방식**으로 한다. 이 때문에 staging 버킷을 두지 않는다.
 - CloudFront cache behavior는 나열 순서대로 비교해 첫 일치를 적용한다. 경로를 정규화한 뒤 behavior를 고르고, origin에는 원래 경로를 보낸다.
 
 ---
