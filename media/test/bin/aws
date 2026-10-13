@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# 테스트용 s3api: put-object(If-None-Match, 체크섬 저장)와 head-object만 흉내 낸다
+op=$2; shift 2; key=""; body=""; sum=""; inm=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --key) key=$2; shift ;;
+    --body) body=$2; shift ;;
+    --checksum-sha256) sum=$2; shift ;;
+    --if-none-match) inm=$2; shift ;;
+  esac
+  shift
+done
+obj="$FAKE_S3/$(tr '/' '_' <<<"$key")"
+case "$op" in
+  put-object)
+    [[ "$inm" == "*" ]] || { echo "AccessDenied" >&2; exit 254; }
+    [[ -e "$obj" ]] && { echo "An error occurred (PreconditionFailed) when calling the PutObject operation" >&2; exit 254; }
+    cp "$body" "$obj" && echo "$sum" >"$obj.sum" ;;
+  head-object)
+    [[ -e "$obj" ]] || { echo "Not Found" >&2; exit 254; }
+    cat "$obj.sum" ;;
+  *) echo "unsupported: $op" >&2; exit 2 ;;
+esac

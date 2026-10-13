@@ -1,14 +1,6 @@
-"""HLS 출력 디렉터리를 검증한다 (design.md §4 "산출물 검증 항목"의 로컬 버전).
+"""HLS 버전 디렉터리 검증 (design.md §4 "산출물 검증 항목").
 
-사용법: python media/validate_hls.py <versionDir>
-
-확인 항목
-- master.m3u8이 있고 variant playlist를 하나 이상 참조한다
-- 각 variant playlist가 존재하고, 참조하는 segment가 모두 존재하며 비어 있지 않다
-- variant마다 #EXT-X-ENDLIST가 있다 (VOD가 끝까지 기록됨)
-- variant 간 전체 길이 차이가 허용 오차 안이다
-
-1단계 Transcode Job도 같은 규칙을 쓴다. 표준 라이브러리만 사용한다.
+usage: python media/validate_hls.py <versionDir>
 """
 
 import sys
