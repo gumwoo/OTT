@@ -27,6 +27,17 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore(web)
+    # CONVENTIONS §1 #3: jsx-a11y는 ESLint 10, typescript-eslint는 TS 6.1+를 지원하지 않는다
+    ignore:
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
+      # 런타임 Node 24에 맞춘다
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
