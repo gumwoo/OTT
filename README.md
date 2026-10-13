@@ -17,6 +17,9 @@ CloudFront 캐시 효율을 유지하면서 국가별 배포 정책을 어떻게
 
 ## 폴더
 
+- `api` - Spring Boot API (가입·구독·재생 권한, 변환 작업 관리). 지금은 골격만
+- `web` - React 앱. 지금은 골격만
+- `transcoder` - 변환 Job (Python). 지금은 골격만
 - `infra/base` - Terraform (S3, CloudFront, 예산 알람, GitHub OIDC)
 - `media` - ffmpeg HLS 변환, 결과 검증, S3 업로드 스크립트
 - `player` - hls.js 플레이어. 시작 시간, 버퍼링, 화질 전환을 같이 기록함
@@ -24,7 +27,17 @@ CloudFront 캐시 효율을 유지하면서 국가별 배포 정책을 어떻게
 
 ## 로컬에서 돌려보기
 
-ffmpeg, Python 3.10+, Node 20+ 필요.
+JDK 17, Node 24, Docker, uv, ffmpeg 필요.
+
+```bash
+docker compose up -d                 # postgres(5434), content-server(8081)
+cd api && ./gradlew bootRun --args='--spring.profiles.active=local'
+cd web && npm ci && npm run dev
+```
+
+모듈별 검사 명령은 [CLAUDE.md](CLAUDE.md)에 모아 둠.
+
+HLS 변환만 따로 해볼 때:
 
 ```bash
 # out/movie-100/v1 에 HLS 파일 생성

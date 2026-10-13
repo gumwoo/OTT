@@ -315,13 +315,15 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 
 ```
 docker compose:
-  postgres
-  content-server   로컬 content 디렉터리를 HTTP로 서빙하는 정적 파일 서버 (예: nginx)
+  postgres         PostgreSQL 17, localhost:5434
+  content-server   nginx, .local/content를 localhost:8081/content로 서빙
 api:  ./gradlew bootRun --args='--spring.profiles.active=local'
 web:  npm run dev   (Vite 프록시: /api → api, /content → content-server)
 ```
 
 - Vite 프록시는 HTTP 서버만 대상으로 할 수 있다. 디렉터리를 직접 가리킬 수 없으므로 compose에 정적 파일 서버를 둔다.
+- postgres를 5432가 아니라 5434에 연다. 개발 PC에 직접 설치한 PostgreSQL이 5432를 쓰고 있으면 API가 그쪽에 붙어 인증 오류가 난다 (0단계에서 실제로 겪음).
+- 통합 테스트는 compose DB를 쓰지 않는다. 테스트를 돌릴 때 Testcontainers가 `postgres:17-alpine`을 따로 띄운다.
 - `local` 프로필: 개발용 RSA 키, 개발용 Job 토큰, 로컬 source·content 디렉터리.
 - 로컬에서는 CloudFront가 없으므로 Signed Cookie는 발급만 되고 검증되지 않는다. 쿠키 검증과 국가 정책은 AWS 실험 단계에서 확인한다.
 
