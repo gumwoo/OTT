@@ -4,6 +4,7 @@
 *.tfstate.*
 crash.log
 terraform.tfvars
+*.tfplan
 
 # 미디어 원본과 변환 결과 (용량이 크고 재현 가능)
 out/
