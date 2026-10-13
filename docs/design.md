@@ -261,28 +261,38 @@ Pod가 OOMKilled되거나 노드가 갑자기 종료되면 Job은 `FAILED`를 �
 
 - **버전은 작업 등록 시점(`REQUESTED`)에 할당한다.** 콘텐츠별로 증가하는 번호를 쓰고, `content_version (content_id, version)`에 **유일성 제약**을 건다. 같은 콘텐츠의 두 작업이 동시에 등록돼도 서로 다른 버전을 받고, 한 번 할당된 버전은 재사용하지 않는다 (실패한 작업의 버전 번호는 비워 둔다).
 - 할당된 버전은 `transcode_job.version`에 기록하고, Job은 그 버전 경로(`v{n}`)에만 쓴다.
+- 작업을 등록할 때 콘텐츠의 **게시 세대 번호(`publish_epoch`)**도 함께 `transcode_job.publish_epoch`에 기록한다.
 - **게시는 한 트랜잭션**으로 처리한다.
 
 ```
 BEGIN
   SELECT ... FROM transcode_job WHERE id = :jobId FOR UPDATE
-    -- PUBLISHED면: 아무것도 바꾸지 않고 COMMIT, 기존 성공 결과 반환 (응답 유실 후 재요청)
+    -- PUBLISHED·PUBLISHED_SUPERSEDED면: 아무것도 바꾸지 않고 COMMIT, 기존 결과 반환 (응답 유실 후 재요청)
     -- UPLOADED가 아니면: 거부
     -- 해시·프로파일·버전 불일치: 거부
-  SELECT current_version, max_published_version FROM content WHERE id = :contentId FOR UPDATE
-    -- max_published_version이 NULL이거나 :v보다 작을 때만 전환
-    -- 이미 :v 이상이면: 포인터를 바꾸지 않고 작업만 PUBLISHED_SUPERSEDED로 기록
+  SELECT current_version, max_published_version, publish_epoch FROM content WHERE id = :contentId FOR UPDATE
+    -- 1) job.publish_epoch ≠ content.publish_epoch → 포인터 유지, PUBLISHED_SUPERSEDED (사유 STALE_EPOCH)
+    -- 2) max_published_version ≥ :v            → 포인터 유지, PUBLISHED_SUPERSEDED (사유 OLDER_VERSION)
+    -- 3) 그 외 (max_published_version이 NULL 포함) → 전환
   UPDATE content SET current_version = :v, max_published_version = :v WHERE id = :contentId
   UPDATE transcode_job SET status = 'PUBLISHED' WHERE id = :jobId
 COMMIT
 ```
 
-- **공개 전환은 단조 증가 규칙을 따른다**: 새 버전이 **지금까지 공개된 적 있는 가장 높은 버전(`max_published_version`)**보다 클 때만 바꾼다. 공개된 적이 없으면(`NULL`, 첫 게시) 바꾼다.
-  - 이전 초안의 `WHERE current_version = :expected`는 첫 게시에서 `NULL = NULL`이 참이 아니라서 **항상 실패**했다. 또 `:expected`를 누가 정하는지도 없었다. content 행을 잠그고 읽은 뒤 규칙으로 판단하는 방식으로 바꿨다.
-  - 늦게 끝난 v4가 이미 공개된 v5를 덮지 못한다.
-  - **비교 대상이 "현재 공개 버전"이 아닌 이유**: v5 공개 후 운영자가 v3으로 롤백했는데 v4 Job이 늦게 끝나면, "v4 > 현재 v3"이라 v4가 공개되고 **롤백이 조용히 무효화**된다. 최고 기록(5)과 비교하면 v4는 `PUBLISHED_SUPERSEDED`가 된다. 롤백 뒤에 새로 요청한 변환은 v6을 받으므로 정상 공개된다.
-- **롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`). `current_version`만 바꾸고 `max_published_version`은 그대로 둔다. 대상 버전은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전만 허용한다 (운영자가 v4를 일부러 공개하고 싶을 때).
-- 게시 세대 번호(`publish_epoch`)를 따로 두는 방법도 있으나, 최고 기록 컬럼 하나로 같은 문제가 풀리므로 쓰지 않는다.
+게시 조건은 두 가지이고, **둘 다** 필요하다.
+
+| 조건 | 막는 것 | 예시 |
+|---|---|---|
+| **같은 게시 세대** (`job.publish_epoch = content.publish_epoch`) | 롤백 **전에** 등록된 작업이 롤백을 덮는 것 | v5 공개 → v6 Job 실행 중 → 운영자가 v3으로 롤백 → v6 완료. v6은 이전 세대 작업이라 공개되지 않는다 |
+| **최고 기록보다 큰 버전** (`:v > max_published_version`) | 같은 세대 안에서 늦게 끝난 낮은 버전이 높은 버전을 덮는 것 | v5 공개 후 같은 세대의 v4가 늦게 완료. v4는 공개되지 않는다 |
+
+- 처음에는 최고 기록 컬럼 하나로 충분하다고 판단했다. 하지만 "롤백 전에 등록됐고 최고 기록보다 높은 버전"(위 v6)은 버전 비교만으로 막을 수 없다. 운영자가 롤백하는 이유는 보통 최근 변환 결과에 문제가 있어서인데, 롤백 전에 같은 조건으로 요청해 둔 작업이 자동으로 올라가면 롤백이 무효가 된다.
+- 이전 초안의 `WHERE current_version = :expected`는 첫 게시에서 `NULL = NULL`이 참이 아니라서 **항상 실패**했다. content 행을 잠그고 읽은 뒤 규칙으로 판단하는 방식으로 바꿨다.
+- `PUBLISHED_SUPERSEDED`에는 사유(`STALE_EPOCH`, `OLDER_VERSION`)를 함께 기록한다.
+- **롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`).
+  - `current_version`을 바꾸고 **`publish_epoch`를 1 올린다.** `max_published_version`은 줄이지 않는다 (지정한 버전이 더 높으면 그 값으로 올린다).
+  - 대상 버전은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전만 허용한다. 롤백 때문에 공개되지 않은 v6을 운영자가 확인 후 공개하고 싶다면 이 동작으로 지정한다.
+  - 롤백 뒤에 새로 요청한 변환은 새 세대와 v7 이상의 버전을 받으므로 정상 공개된다.
 - S3 산출물 확인(manifest·segment 존재)은 DB 잠금을 오래 잡지 않도록 **트랜잭션 시작 전에** 한다. 버전 경로는 불변이므로 확인 후 트랜잭션 사이에 내용이 바뀌지 않는다.
 - 트랜잭션 도중 API가 죽으면 전체가 롤백되고 작업은 `UPLOADED`로 남는다. 같은 publish 요청을 다시 보내면 처음부터 다시 판단한다.
 - 커밋은 됐는데 응답이 유실돼서 Job이 다시 요청하면, 작업이 이미 `PUBLISHED`이므로 **포인터를 건드리지 않고 같은 성공 결과를 돌려준다.** 그사이 다른 버전이 공개됐더라도 이전 작업이 포인터를 되돌리지 않는다.
@@ -312,7 +322,7 @@ publish 요청을 받으면 API는 다음을 **모두** 확인한다.
 | 요청의 `jobId`·원본 해시·프로파일 버전이 등록된 작업과 일치 | 등록되지 않은 작업이나 다른 작업의 산출물을 게시하지 못하게 |
 | 작업 상태가 `UPLOADED` | 업로드가 끝나지 않은 작업을 게시하지 못하게 |
 | **API가 직접** content 버킷의 `v{n}` manifest를 읽고 참조된 segment가 모두 존재하는지 확인 | Job의 자기 보고만 믿지 않음. 업로드가 일부만 된 버전을 게시하지 못하게 |
-| 단조 증가 규칙 (공개된 적 있는 최고 버전보다 클 때만 전환) | 늦게 끝난 작업이 최신 공개 버전이나 운영자 롤백을 덮지 못하게 |
+| 같은 게시 세대 + 단조 증가 규칙 (공개된 적 있는 최고 버전보다 클 때만 전환) | 늦게 끝난 작업이나 롤백 전에 등록된 작업이 최신 공개 버전·운영자 롤백을 덮지 못하게 |
 
 - 원칙: **ServiceAccount 토큰은 누가 호출했는지, DB 작업 상태와 산출물 확인은 무엇을 게시할 수 있는지** 검증한다.
 - Authorization API의 ServiceAccount에는 `tokenreviews` 생성 권한(RBAC)이 필요하다. Helm 차트에 ClusterRole·Binding으로 명시한다.
@@ -702,8 +712,10 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 | **첫 게시** (`current_version`이 NULL) | 정상 전환 |
 | 게시 커밋 후 같은 publish 재요청 | 포인터 변경 없이 같은 성공 결과 |
 | v5 공개 후 늦게 끝난 v4 publish | 포인터 유지, v4는 `PUBLISHED_SUPERSEDED` |
-| v5 공개 → v3으로 롤백 → 늦게 끝난 v4 publish | 포인터 v3 유지 (롤백이 무효화되지 않음), v4는 `PUBLISHED_SUPERSEDED` |
-| 롤백 후 새 변환 요청 | v6 할당, 정상 공개 |
+| v5 공개 → v3으로 롤백 → 늦게 끝난 v4 publish | 포인터 v3 유지 (롤백이 무효화되지 않음), v4는 `PUBLISHED_SUPERSEDED(STALE_EPOCH)` |
+| v5 공개 → v6 Job 실행 중 → v3으로 롤백 → v6 publish | 포인터 v3 유지, v6은 `PUBLISHED_SUPERSEDED(STALE_EPOCH)` |
+| 위 v6을 운영자가 rollback 동작으로 지정 | v6 공개, `publish_epoch` 증가 |
+| 롤백 후 새 변환 요청 | 새 세대·새 버전 할당, 정상 공개 |
 | 작업 등록 후 Job 생성 실패 (`kubectl create` 실패) | 시작 기한 후 `FAILED(NOT_STARTED)` |
 | `NOT_STARTED` 확정 후 뒤늦게 뜬 Job의 `RUNNING` 보고 | 409, Job 즉시 종료 |
 | 실행 중 Job의 Pod 강제 삭제 | heartbeat 끊김 → CronJob이 `FAILED(LOST)` 확정 → 기한 후 미완성 버전 정리 |

@@ -57,10 +57,11 @@ docs/
 users              id, email(unique), password_hash, role(USER|ADMIN), created_at
 subscriptions      user_id(PK), plan(BASIC|PREMIUM), expires_at(BASIC은 NULL), updated_at
 contents           id('movie-100'), title, description, required_plan, duration_sec,
-                   current_version(null 가능), max_published_version(null 가능), created_at
+                   current_version(null 가능), max_published_version(null 가능),
+                   publish_epoch(기본 0), created_at
 content_versions   (content_id, version) PK, profile_version, source_hash, created_at
-transcode_jobs     id, content_id, version, source_key, source_hash, profile_version,
-                   status, failure_code, error, k8s_job_name,
+transcode_jobs     id, content_id, version, publish_epoch, source_key, source_hash, profile_version,
+                   status, failure_code, superseded_reason, error, k8s_job_name,
                    started_at, heartbeat_at, created_at, updated_at
 playback_sessions  id(UUID), user_id, content_id, version, country,
                    issued_at, last_refreshed_at, expires_at
@@ -72,7 +73,10 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
 - 버전은 변환 요청 시점에 할당한다. `content_versions`의 PK가 유일성을 보장한다 (design.md §4).
 - 구독: 가입하면 BASIC이고 **BASIC은 만료가 없다**(`expires_at` = NULL). PREMIUM만 만료일이 있고, 만료되면 BASIC으로 본다. 재생 권한 판단은 "PREMIUM이고 만료 전" 또는 "BASIC"으로 등급을 계산한 뒤 `required_plan`과 비교한다.
 - `transcode_jobs.status`: `REQUESTED → RUNNING → VALIDATED → UPLOADED → PUBLISHED`(또는 `PUBLISHED_SUPERSEDED`), 어느 단계에서든 `FAILED`. 실패하면 `failure_code`(`VERSION_DIRTY`, `DISK_FULL`, `SOURCE_HASH_MISMATCH`, `VALIDATION_FAILED`, `LOST`, `NOT_STARTED` 등)와 메시지를 남긴다.
-- `contents.max_published_version`은 지금까지 공개된 적 있는 가장 높은 버전이다. publish는 이 값보다 큰 버전만 공개하고, 롤백은 `current_version`만 바꾼다. 롤백 뒤에 늦게 끝난 작업이 롤백을 덮지 못하게 하는 장치다 (design.md §4).
+- 게시 조건은 두 가지다 (design.md §4 "버전 할당과 게시 트랜잭션").
+  - `transcode_jobs.publish_epoch`가 `contents.publish_epoch`와 같아야 한다. 작업 등록 때 현재 세대를 기록하고, 롤백할 때마다 콘텐츠의 세대를 1 올린다. 롤백 전에 등록된 작업이 롤백을 덮지 못하게 하는 장치다.
+  - 버전이 `contents.max_published_version`(공개된 적 있는 최고 버전)보다 커야 한다. 같은 세대 안에서 늦게 끝난 낮은 버전이 높은 버전을 덮지 못하게 하는 장치다.
+  - 둘 중 하나라도 어긋나면 포인터를 바꾸지 않고 `PUBLISHED_SUPERSEDED`로 기록하며, `superseded_reason`에 `STALE_EPOCH` 또는 `OLDER_VERSION`을 남긴다.
 - `k8s_job_name`은 `transcode-{contentId}-v{n}`. 버전마다 고유하다 (design.md §4).
 - `heartbeat_at`은 Job이 주기적으로 갱신한다. 끊기면 운영 CronJob이 `FAILED(LOST)`로 확정한다 (design.md §4 "작업 생존 확인").
 - `playback_sessions`는 Cookie 발급 기록이다. QoE를 같은 세션으로 묶어서 분석하려고 둔다. `country`는 API가 받은 `CloudFront-Viewer-Country`이고, 기록용일 뿐 판단에 쓰지 않는다.
@@ -195,7 +199,7 @@ Cookie 갱신(`POST /api/playback/{sessionId}/refresh`):
 | POST | `/api/admin/contents` | 콘텐츠 메타데이터 등록 |
 | POST | `/api/admin/contents/{id}/transcode-jobs` | 변환 요청. 버전 할당, `REQUESTED`로 등록, Job 파라미터 반환 |
 | GET | `/api/admin/transcode-jobs/{jobId}` | 상태 조회 |
-| POST | `/api/admin/contents/{id}/rollback` | 공개 버전 지정. 대상은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전. `current_version`만 바꾸고 `max_published_version`은 유지한다. publish의 단조 증가 규칙과 분리된 운영자 전용 동작 |
+| POST | `/api/admin/contents/{id}/rollback` | 공개 버전 지정. 대상은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전. `current_version`을 바꾸고 `publish_epoch`를 1 올린다. `max_published_version`은 줄이지 않는다 (지정 버전이 더 높으면 올린다). publish의 게시 조건과 분리된 운영자 전용 동작 |
 
 권한 분리:
 
@@ -217,7 +221,8 @@ publish 응답:
 |---|---|
 | 정상 전환 | 200 `{ status: "PUBLISHED", currentVersion: n }` |
 | 이미 `PUBLISHED` (응답 유실 후 재요청) | 200, 같은 결과. 포인터를 다시 바꾸지 않는다 |
-| 같거나 더 높은 버전이 공개된 적 있음 (`max_published_version` ≥ 요청 버전) | 200 `{ status: "PUBLISHED_SUPERSEDED", currentVersion: m }` |
+| 게시 세대가 다름 (작업 등록 뒤 롤백이 있었음) | 200 `{ status: "PUBLISHED_SUPERSEDED", reason: "STALE_EPOCH", currentVersion: m }` |
+| 같거나 더 높은 버전이 공개된 적 있음 (`max_published_version` ≥ 요청 버전) | 200 `{ status: "PUBLISHED_SUPERSEDED", reason: "OLDER_VERSION", currentVersion: m }` |
 | `UPLOADED`가 아님, 식별자 불일치, 산출물 누락 | 409 + 오류 코드 |
 
 - heartbeat가 409를 받으면 Job이 스스로 멈추도록 해서, `LOST`로 확정된 뒤에도 계속 업로드하는 경우를 줄인다. 확실한 종료는 `activeDeadlineSeconds`가 보장한다.
@@ -364,7 +369,9 @@ Docker Compose만으로는 Kubernetes TokenReview·RBAC를 재현할 수 없고,
 | v5 공개 후 v4 publish | 포인터 유지, v4는 `PUBLISHED_SUPERSEDED` |
 | heartbeat 끊긴 RUNNING 작업 | CronJob이 `FAILED(LOST)` 확정. 이후 heartbeat는 409 |
 | 시작 기한이 지난 `REQUESTED` 작업 | CronJob이 `FAILED(NOT_STARTED)` 확정. 이후 `RUNNING` 보고는 409 |
-| v5 공개 → v3 롤백 → v4 publish | 포인터 v3 유지, v4는 `PUBLISHED_SUPERSEDED` |
+| v5 공개 → v3 롤백 → v4 publish | 포인터 v3 유지, v4는 `PUBLISHED_SUPERSEDED(STALE_EPOCH)` |
+| v5 공개 → v6 Job 실행 중 → v3 롤백 → v6 publish | 포인터 v3 유지, v6은 `PUBLISHED_SUPERSEDED(STALE_EPOCH)` |
+| 롤백과 publish가 동시에 들어옴 | content 행 잠금으로 직렬화. 어느 순서든 세대 규칙에 맞는 결과 하나 |
 | QoE를 남의 `session_id`로 보고 | 404 |
 | ADMIN 초기화를 두 프로세스가 동시에 실행 | 계정 1개만 생성 |
 | CSRF: 토큰 없이 POST, 로그인 직후 이전 토큰으로 POST | 403 `CSRF_INVALID`. 프론트는 토큰을 다시 받아 한 번만 재시도 |
