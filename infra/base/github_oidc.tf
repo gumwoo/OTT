@@ -72,6 +72,14 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${aws_s3_bucket.content.arn}/content/*"]
   }
 
+  # media/seed.sh가 412(이미 있음)를 받았을 때 기존 객체의 체크섬을 HeadObject로 비교한다.
+  # HeadObject에는 s3:GetObject 권한이 필요하다.
+  statement {
+    sid       = "ContentVerifyExisting"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.content.arn}/content/*"]
+  }
+
   statement {
     sid       = "InvalidateApp"
     actions   = ["cloudfront:CreateInvalidation"]

@@ -6,6 +6,12 @@
 //   node measure/hls-probe.mjs --url https://<dist>.cloudfront.net/content/movie-100/runs/run-001/master.m3u8 \
 //     --location seoul --label cold --segments 5 --variant highest --out results/e2.jsonl
 //
+// 측정 성공 조건
+// - master, variant playlist, 요청한 segment가 모두 HTTP 200이어야 측정 성공(ok: true)이다.
+// - 하나라도 200이 아니거나 네트워크 오류가 나면 그 지점에서 멈추고 ok: false와 실패 사유를 남긴다.
+//   실패한 측정의 수치(startupProxyMs, hit/miss)는 성공 측정과 섞어 집계하지 않는다.
+// - 실패하면 종료 코드 1로 끝난다. 반복 측정 스크립트가 실패를 놓치지 않게 하기 위해서다.
+//
 // 주의
 // - Node fetch는 연결을 재사용한다. 첫 요청에는 DNS·TLS 시간이 포함되고 이후 요청에는 빠진다.
 //   이 차이를 기록하기 위해 요청 순번(seq)을 남긴다.
@@ -55,9 +61,27 @@ function pickVariant(variants, which) {
   return variants[Number(which)];
 }
 
+class ProbeFailure extends Error {
+  constructor(reason, kind, path, status) {
+    super(`${reason}: ${kind} ${path}${status === null ? '' : ` -> ${status}`}`);
+    this.reason = reason;
+    this.kind = kind;
+    this.path = path;
+    this.status = status;
+  }
+}
+
+const EXPECTED_STATUS = 200;
+
 async function timedGet(url, ctx, kind) {
+  const path = new URL(url).pathname;
   const started = performance.now();
-  const res = await fetch(url, { headers: { 'user-agent': 'ott-hls-probe/0.1' } });
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'user-agent': 'ott-hls-probe/0.1' } });
+  } catch (err) {
+    throw new ProbeFailure('NETWORK_ERROR', kind, path, null);
+  }
   const ttfbMs = performance.now() - started;
   const body = await res.arrayBuffer();
   const totalMs = performance.now() - started;
@@ -70,8 +94,9 @@ async function timedGet(url, ctx, kind) {
     location: ctx.location,
     label: ctx.label,
     kind,
-    path: new URL(url).pathname,
+    path,
     status: res.status,
+    ok: res.status === EXPECTED_STATUS,
     bytes: body.byteLength,
     ttfbMs: Math.round(ttfbMs * 10) / 10,
     totalMs: Math.round(totalMs * 10) / 10,
@@ -81,6 +106,7 @@ async function timedGet(url, ctx, kind) {
     cfId: res.headers.get('x-amz-cf-id')
   };
   ctx.records.push(record);
+  if (!record.ok) throw new ProbeFailure('UNEXPECTED_STATUS', kind, path, res.status);
   return { res, text: () => new TextDecoder().decode(body) };
 }
 
@@ -96,21 +122,31 @@ async function main() {
   };
 
   const started = performance.now();
-  const master = await timedGet(args.url, ctx, 'master');
-  if (master.res.status !== 200) throw new Error(`master returned ${master.res.status}`);
-
-  const variant = pickVariant(parseMaster(master.text(), args.url), args.variant);
-  if (!variant) throw new Error(`variant not found: ${args.variant}`);
-
-  const media = await timedGet(variant.url, ctx, 'playlist');
-  const segments = parseMedia(media.text(), variant.url).slice(0, args.segments);
-
+  let variant = null;
   let firstSegmentDoneMs = null;
-  for (const seg of segments) {
-    await timedGet(seg, ctx, 'segment');
-    if (firstSegmentDoneMs === null) firstSegmentDoneMs = performance.now() - started;
+  let failure = null;
+
+  try {
+    const master = await timedGet(args.url, ctx, 'master');
+
+    variant = pickVariant(parseMaster(master.text(), args.url), args.variant) ?? null;
+    if (!variant) throw new ProbeFailure('VARIANT_NOT_FOUND', 'master', new URL(args.url).pathname, null);
+
+    const media = await timedGet(variant.url, ctx, 'playlist');
+    const segments = parseMedia(media.text(), variant.url).slice(0, args.segments);
+    if (segments.length === 0) throw new ProbeFailure('NO_SEGMENTS', 'playlist', new URL(variant.url).pathname, null);
+
+    for (const seg of segments) {
+      await timedGet(seg, ctx, 'segment');
+      if (firstSegmentDoneMs === null) firstSegmentDoneMs = performance.now() - started;
+    }
+  } catch (err) {
+    if (!(err instanceof ProbeFailure)) throw err;
+    failure = { reason: err.reason, kind: err.kind, path: err.path, status: err.status };
   }
 
+  const ok = failure === null;
+  const succeeded = ctx.records.filter((r) => r.ok);
   const summary = {
     type: 'summary',
     runId: ctx.runId,
@@ -118,12 +154,16 @@ async function main() {
     at: new Date().toISOString(),
     location: ctx.location,
     label: ctx.label,
-    variant: variant.resolution,
+    ok,
+    failure,
+    variant: variant?.resolution ?? null,
     requests: ctx.records.length,
+    failedRequests: ctx.records.length - succeeded.length,
     // 플레이어 startup의 근사치: master + playlist + 첫 segment 다운로드 완료까지. 디코딩·버퍼 정책은 포함하지 않는다.
-    startupProxyMs: firstSegmentDoneMs === null ? null : Math.round(firstSegmentDoneMs),
-    hits: ctx.records.filter((r) => /^Hit/i.test(r.xCache ?? '')).length,
-    misses: ctx.records.filter((r) => /^Miss/i.test(r.xCache ?? '')).length,
+    // 측정이 실패하면 null로 둔다. 실패한 요청 시간이 성공 수치에 섞이지 않게 하기 위해서다.
+    startupProxyMs: ok && firstSegmentDoneMs !== null ? Math.round(firstSegmentDoneMs) : null,
+    hits: succeeded.filter((r) => /^Hit/i.test(r.xCache ?? '')).length,
+    misses: succeeded.filter((r) => /^Miss/i.test(r.xCache ?? '')).length,
     pops: [...new Set(ctx.records.map((r) => r.pop))]
   };
 
@@ -133,6 +173,7 @@ async function main() {
     await appendFile(args.out, lines);
   }
   console.log(JSON.stringify(summary, null, 2));
+  if (!ok) process.exitCode = 1;
 }
 
 main().catch((err) => {
