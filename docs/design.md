@@ -248,7 +248,9 @@ S3 업로드는 성공했는데 응답이 유실되면 boto3가 자동 재시도
 Pod가 OOMKilled되거나 노드가 갑자기 종료되면 Job은 `FAILED`를 보고할 기회가 없다. 그러면 DB에는 `RUNNING`이 계속 남고, 정리 규칙(`FAILED`만 대상)도 그 버전을 건드리지 못한다.
 
 - Job은 실행 중 **주기적으로 heartbeat**를 보낸다 (`transcode_jobs.heartbeat_at` 갱신). ffmpeg가 도는 동안에도 별도 스레드에서 보낸다.
-- 운영 CronJob이 `REQUESTED` 이후 진행 상태(`RUNNING`·`VALIDATED`·`UPLOADED`)에서 **heartbeat가 일정 시간 이상 끊긴 작업을 `FAILED(LOST)`로 확정**한다.
+- 운영 CronJob이 진행 상태(`RUNNING`·`VALIDATED`·`UPLOADED`)에서 **heartbeat가 일정 시간 이상 끊긴 작업을 `FAILED(LOST)`로 확정**한다.
+- **시작조차 못 한 작업**도 확정한다. 작업 등록(`REQUESTED`) 후 운영자 CLI의 `kubectl create`가 실패하면 Job이 없으므로 heartbeat가 한 번도 오지 않는다. 그러면 위 규칙에 걸리지 않고 `REQUESTED`로 영원히 남는다. 그래서 `REQUESTED` 상태로 정해진 시작 기한이 지나도 `RUNNING`이 되지 않은 작업은 `FAILED(NOT_STARTED)`로 확정한다. 시작 기한은 이미지 pull과 노드 확장 시간을 고려해 정한다.
+- `NOT_STARTED`로 확정된 뒤에 Job이 뒤늦게 떠서 `RUNNING`을 보고하면 API가 409로 거부하고, Job은 heartbeat 409와 같은 방식으로 즉시 종료한다.
 - 이 방식은 Kubernetes API 읽기 권한이 필요 없고, Job 객체가 TTL로 이미 삭제된 뒤에도 동작한다. Kubernetes Job 상태와의 대조는 원인 기록을 보강하는 용도로만 쓴다 (선택).
 - **네트워크만 끊기고 Pod는 살아 있는 경우**: DB에서는 `LOST`로 확정됐는데 Pod가 계속 업로드할 수 있다. 게시는 상태 검사에서 거부되므로 공개되지는 않는다. 정리 후에 파일이 다시 생기는 것을 막기 위해:
   - Job에 `activeDeadlineSeconds`(최대 실행 시간)를 걸어 Kubernetes가 확실히 종료하게 한다.
@@ -267,18 +269,20 @@ BEGIN
     -- PUBLISHED면: 아무것도 바꾸지 않고 COMMIT, 기존 성공 결과 반환 (응답 유실 후 재요청)
     -- UPLOADED가 아니면: 거부
     -- 해시·프로파일·버전 불일치: 거부
-  SELECT current_version FROM content WHERE id = :contentId FOR UPDATE
-    -- current_version이 NULL이거나 :v보다 작을 때만 전환
+  SELECT current_version, max_published_version FROM content WHERE id = :contentId FOR UPDATE
+    -- max_published_version이 NULL이거나 :v보다 작을 때만 전환
     -- 이미 :v 이상이면: 포인터를 바꾸지 않고 작업만 PUBLISHED_SUPERSEDED로 기록
-  UPDATE content SET current_version = :v WHERE id = :contentId
+  UPDATE content SET current_version = :v, max_published_version = :v WHERE id = :contentId
   UPDATE transcode_job SET status = 'PUBLISHED' WHERE id = :jobId
 COMMIT
 ```
 
-- **공개 전환은 단조 증가 규칙을 따른다**: 새 버전이 현재 공개 버전보다 클 때만 바꾼다. 현재 공개 버전이 없으면(`NULL`, 첫 게시) 바꾼다.
+- **공개 전환은 단조 증가 규칙을 따른다**: 새 버전이 **지금까지 공개된 적 있는 가장 높은 버전(`max_published_version`)**보다 클 때만 바꾼다. 공개된 적이 없으면(`NULL`, 첫 게시) 바꾼다.
   - 이전 초안의 `WHERE current_version = :expected`는 첫 게시에서 `NULL = NULL`이 참이 아니라서 **항상 실패**했다. 또 `:expected`를 누가 정하는지도 없었다. content 행을 잠그고 읽은 뒤 규칙으로 판단하는 방식으로 바꿨다.
   - 늦게 끝난 v4가 이미 공개된 v5를 덮지 못한다.
-- **이전 버전으로 되돌리는 롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`). 대상 버전은 한 번 공개된 적 있는 버전만 허용한다.
+  - **비교 대상이 "현재 공개 버전"이 아닌 이유**: v5 공개 후 운영자가 v3으로 롤백했는데 v4 Job이 늦게 끝나면, "v4 > 현재 v3"이라 v4가 공개되고 **롤백이 조용히 무효화**된다. 최고 기록(5)과 비교하면 v4는 `PUBLISHED_SUPERSEDED`가 된다. 롤백 뒤에 새로 요청한 변환은 v6을 받으므로 정상 공개된다.
+- **롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`). `current_version`만 바꾸고 `max_published_version`은 그대로 둔다. 대상 버전은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전만 허용한다 (운영자가 v4를 일부러 공개하고 싶을 때).
+- 게시 세대 번호(`publish_epoch`)를 따로 두는 방법도 있으나, 최고 기록 컬럼 하나로 같은 문제가 풀리므로 쓰지 않는다.
 - S3 산출물 확인(manifest·segment 존재)은 DB 잠금을 오래 잡지 않도록 **트랜잭션 시작 전에** 한다. 버전 경로는 불변이므로 확인 후 트랜잭션 사이에 내용이 바뀌지 않는다.
 - 트랜잭션 도중 API가 죽으면 전체가 롤백되고 작업은 `UPLOADED`로 남는다. 같은 publish 요청을 다시 보내면 처음부터 다시 판단한다.
 - 커밋은 됐는데 응답이 유실돼서 Job이 다시 요청하면, 작업이 이미 `PUBLISHED`이므로 **포인터를 건드리지 않고 같은 성공 결과를 돌려준다.** 그사이 다른 버전이 공개됐더라도 이전 작업이 포인터를 되돌리지 않는다.
@@ -298,7 +302,7 @@ REQUESTED → RUNNING → VALIDATED → UPLOADED → PUBLISHED
 - `UPLOADED`: content 버킷의 `v{n}`으로 업로드 완료 (Job이 보고)
 - `PUBLISHED`: API가 직접 확인하고 `current_version`을 바꾼 상태
 - `PUBLISHED_SUPERSEDED`: 검증은 통과했지만 이미 더 높은 버전이 공개돼 있어서 포인터를 바꾸지 않은 상태. 롤백 대상이 될 수 있으므로 정리하지 않는다
-- `FAILED`: 실패 단계와 원인 코드(`VERSION_DIRTY`, `DISK_FULL`, `SOURCE_HASH_MISMATCH`, `VALIDATION_FAILED`, `LOST` 등)를 함께 기록. `LOST`는 heartbeat가 끊겨 CronJob이 확정한 경우
+- `FAILED`: 실패 단계와 원인 코드(`VERSION_DIRTY`, `DISK_FULL`, `SOURCE_HASH_MISMATCH`, `VALIDATION_FAILED`, `LOST`, `NOT_STARTED` 등)를 함께 기록. `LOST`는 heartbeat가 끊겨, `NOT_STARTED`는 시작 기한 안에 `RUNNING`이 되지 않아 CronJob이 확정한 경우
 
 publish 요청을 받으면 API는 다음을 **모두** 확인한다.
 
@@ -308,7 +312,7 @@ publish 요청을 받으면 API는 다음을 **모두** 확인한다.
 | 요청의 `jobId`·원본 해시·프로파일 버전이 등록된 작업과 일치 | 등록되지 않은 작업이나 다른 작업의 산출물을 게시하지 못하게 |
 | 작업 상태가 `UPLOADED` | 업로드가 끝나지 않은 작업을 게시하지 못하게 |
 | **API가 직접** content 버킷의 `v{n}` manifest를 읽고 참조된 segment가 모두 존재하는지 확인 | Job의 자기 보고만 믿지 않음. 업로드가 일부만 된 버전을 게시하지 못하게 |
-| 단조 증가 규칙 (현재 공개 버전보다 클 때만 전환) | 늦게 끝난 작업이 최신 공개 버전을 덮지 못하게 |
+| 단조 증가 규칙 (공개된 적 있는 최고 버전보다 클 때만 전환) | 늦게 끝난 작업이 최신 공개 버전이나 운영자 롤백을 덮지 못하게 |
 
 - 원칙: **ServiceAccount 토큰은 누가 호출했는지, DB 작업 상태와 산출물 확인은 무엇을 게시할 수 있는지** 검증한다.
 - Authorization API의 ServiceAccount에는 `tokenreviews` 생성 권한(RBAC)이 필요하다. Helm 차트에 ClusterRole·Binding으로 명시한다.
@@ -571,7 +575,7 @@ rev 14  롤백 = 내용 X를 새 순번으로 배포
 - Authorization API (Deployment), RDS PostgreSQL Single-AZ
 - 공개 버전별 Signed Cookie 발급, 만료 전 갱신, `/api/qoe`
 - CronJob은 1단계에서 **하나만** 둔다. 하는 일은 순서대로 세 가지다.
-  1. **생존 확인**: heartbeat가 끊긴 진행 중 작업을 `FAILED(LOST)`로 확정 (§4 "작업 생존 확인")
+  1. **생존 확인**: heartbeat가 끊긴 진행 중 작업을 `FAILED(LOST)`로, 시작 기한이 지난 `REQUESTED` 작업을 `FAILED(NOT_STARTED)`로 확정 (§4 "작업 생존 확인")
   2. **공개 버전 무결성 점검**: 모든 `current_version`이 완전한 버전 경로를 가리키는지
   3. **미완성 버전 정리**
      - 정리 대상은 **DB 작업 상태 기준**으로만 고른다. 작업이 `FAILED`이고, 확정 후 **Job의 `activeDeadlineSeconds`보다 충분히 긴 시간**이 지났으며, **한 번도 `current_version`이 된 적 없는** 버전 경로만 삭제한다.
@@ -698,6 +702,10 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 | **첫 게시** (`current_version`이 NULL) | 정상 전환 |
 | 게시 커밋 후 같은 publish 재요청 | 포인터 변경 없이 같은 성공 결과 |
 | v5 공개 후 늦게 끝난 v4 publish | 포인터 유지, v4는 `PUBLISHED_SUPERSEDED` |
+| v5 공개 → v3으로 롤백 → 늦게 끝난 v4 publish | 포인터 v3 유지 (롤백이 무효화되지 않음), v4는 `PUBLISHED_SUPERSEDED` |
+| 롤백 후 새 변환 요청 | v6 할당, 정상 공개 |
+| 작업 등록 후 Job 생성 실패 (`kubectl create` 실패) | 시작 기한 후 `FAILED(NOT_STARTED)` |
+| `NOT_STARTED` 확정 후 뒤늦게 뜬 Job의 `RUNNING` 보고 | 409, Job 즉시 종료 |
 | 실행 중 Job의 Pod 강제 삭제 | heartbeat 끊김 → CronJob이 `FAILED(LOST)` 확정 → 기한 후 미완성 버전 정리 |
 | `enable_api=false` 상태에서 `/api/*` 요청 | `503 API_MAINTENANCE` (index.html 200이 아님) |
 | 실행 중 작업의 버전 경로, 공개된 적 있는 버전 경로 | CronJob이 삭제하지 않음 |
