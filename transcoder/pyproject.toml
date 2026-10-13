@@ -1,0 +1,39 @@
+[project]
+name = "transcoder"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+transcoder = "transcoder.main:main"
+
+[dependency-groups]
+dev = [
+    "mypy==2.4.0",
+    "pytest==9.1.1",
+    "ruff==0.17.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# PY-02: ALL 대신 명시 (0.16부터 기본 규칙이 크게 늘었다)
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "BLE", "S", "PTH", "TRY", "C4", "PL"]
+# 실패 메시지에 경로 같은 맥락을 넣는다
+ignore = ["TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.mypy]
+strict = true
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+strict = true
