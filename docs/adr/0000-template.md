@@ -4,6 +4,7 @@
 - 날짜: YYYY-MM-DD
 - 결정 근거의 성격: 실측 장애 | 재현 실험 | 가정한 운영 요구사항 | 문서 근거만
 - 관련 실험: E? (없으면 "없음")
+- blog: publish | skip (상태가 "채택"이고 publish면 merge 시 Velog에 게시. CONVENTIONS §13)
 
 ## 1. 문제와 제약
 
