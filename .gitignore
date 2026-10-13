@@ -19,3 +19,6 @@ node_modules/
 
 __pycache__/
 *.pyc
+
+# 로컬 개발용 content·source 디렉터리
+.local/
