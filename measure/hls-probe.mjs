@@ -64,6 +64,20 @@ async function timedGet(url, ctx, kind) {
   try {
     res = await fetch(url, { headers: { 'user-agent': 'ott-hls-probe/0.1' } });
   } catch (err) {
+    ctx.records.push({
+      runId: ctx.runId,
+      probeId: ctx.probeId,
+      seq: ctx.seq++,
+      at: new Date().toISOString(),
+      location: ctx.location,
+      label: ctx.label,
+      kind,
+      path,
+      status: null,
+      ok: false,
+      error: String(err?.cause?.code ?? err?.message ?? err),
+      totalMs: Math.round((performance.now() - started) * 10) / 10
+    });
     throw new ProbeFailure('NETWORK_ERROR', kind, path, null);
   }
   const ttfbMs = performance.now() - started;
