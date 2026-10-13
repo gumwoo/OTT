@@ -1,0 +1,9 @@
+# terraform.tfvars로 복사해서 사용한다. terraform.tfvars는 커밋하지 않는다.
+budget_email       = "you@example.com"
+monthly_budget_usd = 30
+
+# GitHub Actions OIDC 배포 역할을 쓸 때만 설정한다.
+# github_repo = "gumwoo/OTT"
+
+# FlowTicket 등에서 이미 GitHub OIDC provider를 만들었다면 그 ARN을 넣는다.
+# existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
