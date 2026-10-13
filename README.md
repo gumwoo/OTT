@@ -2,12 +2,19 @@
 
 국가마다 볼 수 있는 콘텐츠가 다른 VOD 서비스를 AWS에서 만들고, 운영할 때 생기는 문제를 실험으로 확인하는 1인 프로젝트.
 
-영상 사이트 자체보다 그 뒤의 두 가지가 관심사다.
-
-- 전송: CDN 캐시 효율을 해치지 않으면서 국가별 시청 제한을 어떻게 걸지, 정책을 바꾸면 전 세계에 반영되기까지 얼마나 걸리는지
-- 미디어 운영: 쿠버네티스에서 API와 영상 변환 Job을 같이 돌릴 때, 변환이 실패하거나 몰려도 잘못된 영상이 공개되지 않고 API가 버티는지
-
 지금은 로컬 개발 단계다. AWS 배포와 실험은 개발을 다 끝낸 뒤에 필요한 기간만 리소스를 만들어서 하고 바로 철거한다.
+
+## 왜 만들었나
+
+이전 프로젝트 FlowTicket에서는 동시 요청이 몰리는 서비스를 EKS에서 HPA와 Cluster Autoscaler로 늘리고, 부하 테스트로 확인했다. 그건 한 리전 안에서 한 종류의 서버를 늘리고 줄이는 문제였다. 이번에는 거기서 다루지 못한 두 가지를 골랐다.
+
+첫째는 서버 바깥에서 일어나는 일이다. 사용자는 여러 나라에 있고, 영상 요청 대부분은 서버까지 오지 않고 CDN에서 끝난다. 이 상태에서 국가마다 볼 수 있는 콘텐츠를 다르게 하려면 판단을 엣지에서 해야 한다. 그러면 캐시 효율은 지킬 수 있는지, 정책을 바꾸면 언제 반영되는지, 잘못 바꿨을 때 어떻게 되돌리는지가 새로운 문제가 된다.
+
+둘째는 성격이 다른 작업을 한 플랫폼에서 같이 운영하는 일이다. 항상 응답해야 하는 API와, CPU를 많이 쓰고 중간에 죽을 수도 있는 영상 변환 배치를 같은 쿠버네티스에서 돌린다. 이때 변환이 API를 느리게 만들지 않는지, 변환이 실패하거나 늦게 끝나도 잘못된 영상이 공개되지 않는지를 확인하고 싶었다.
+
+OTT를 고른 건 이 두 문제가 한 서비스에서 같이 나오기 때문이다. 판권 때문에 국가마다 볼 수 있는 콘텐츠가 다르고, 새 영상이 들어올 때마다 여러 화질로 변환하는 작업이 돈다.
+
+EKS는 OTT라서 꼭 필요한 게 아니다. API 하나만 보면 ECS가 더 단순하다. 지원하려는 플랫폼·DevOps 직무에서 쿠버네티스 운영 비중이 커서 일부러 골랐고, 그 판단과 대안은 [ADR-0011](docs/adr/0011-eks-platform.md)에 남겼다.
 
 ## 구조
 
@@ -64,31 +71,8 @@
 | 인프라 | AWS (CloudFront, S3, EKS, RDS), Terraform. Helm·Argo CD는 쿠버네티스 단계에서 추가 |
 | 검사 | GitHub Actions, ArchUnit, Checkstyle, ESLint, Ruff, mypy, tflint, trivy, CodeQL |
 
-## 폴더
+## 문서
 
-- `api` - 인증·구독·재생 권한, 변환 작업 관리 API
-- `web` - 웹 앱 (화면 규칙은 [docs/ui.md](docs/ui.md))
-- `transcoder` - 변환 Job
-- `infra` - Terraform
-- `media` - FFmpeg 변환, 결과 검증, S3 업로드 스크립트
-- `measure` - CloudFront 캐시와 응답 시간 측정 스크립트
-- `docs` - 설계, ADR, 개발 규칙
-
-## 로컬에서 돌려보기
-
-JDK 17, Node 24, Docker, uv, ffmpeg 필요.
-
-```bash
-docker compose up -d                 # postgres(5434), content-server(8081)
-cd api && ./gradlew bootRun --args='--spring.profiles.active=local'
-cd web && npm ci && npm run dev
-```
-
-HLS 변환만 따로 해볼 때:
-
-```bash
-bash media/transcode.sh <영상 파일> movie-100 1   # out/movie-100/v1
-python media/validate_hls.py out/movie-100/v1
-```
-
-모듈별 검사 명령은 [CLAUDE.md](CLAUDE.md), 개발 규칙은 [docs/CONVENTIONS.md](docs/CONVENTIONS.md). 테스트 영상은 Blender 오픈 무비(CC-BY)를 쓴다.
+- [설계](docs/design.md), [앱 설계](docs/app-design.md), [ADR](docs/adr/)
+- [개발 규칙](docs/CONVENTIONS.md), [하네스 검증 기록](docs/harness-verification.md), [UI 규칙](docs/ui.md)
+- [개발 환경과 로컬 실행](docs/development.md)
