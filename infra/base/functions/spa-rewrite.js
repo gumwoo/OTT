@@ -1,5 +1,4 @@
-// 기본 behavior 전용. 확장자가 없는 앱 경로만 /index.html로 바꾼다.
-// /content/*, /api/*는 별도 behavior라 이 함수가 실행되지 않는다.
+// default behavior 전용
 function handler(event) {
   var request = event.request;
   var uri = request.uri;

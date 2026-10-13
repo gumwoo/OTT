@@ -1,4 +1,4 @@
-# 계정 전체 비용 기준 알람이다. 태그 기준으로 좁히려면 Project 태그를 비용 할당 태그로 활성화해야 한다.
+# 계정 전체 기준 (태그로 좁히려면 비용 할당 태그 활성화 필요)
 resource "aws_budgets_budget" "monthly" {
   name         = "${var.project}-monthly"
   budget_type  = "COST"

@@ -4,11 +4,6 @@ locals {
   bucket_suffix = data.aws_caller_identity.current.account_id
 }
 
-# ---------------------------------------------------------------------------
-# content: HLS 산출물. 버전 경로(/content/{id}/v{n}/)는 불변으로 다룬다.
-# app:     플레이어 정적 파일.
-# 둘 다 CloudFront OAC로만 읽을 수 있다.
-# ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "content" {
   bucket = "${var.project}-content-${local.bucket_suffix}"
@@ -48,7 +43,7 @@ resource "aws_s3_bucket_ownership_controls" "app" {
   }
 }
 
-# s3:ListBucket을 주지 않으므로 없는 객체 요청은 404가 아니라 403이 된다 (design.md §3).
+# ListBucket이 없어서 없는 객체는 403으로 온다
 data "aws_iam_policy_document" "content_oac" {
   statement {
     sid       = "AllowCloudFrontOAC"
@@ -67,9 +62,7 @@ data "aws_iam_policy_document" "content_oac" {
     }
   }
 
-  # 버전 경로 불변성을 버킷 수준에서 강제한다: If-None-Match 없는 쓰기는 누가 하든 거부.
-  # 주의: 이 정책이 걸린 경로에는 CopyObject를 쓸 수 없다 (헤더 없으면 403, 있으면 501).
-  # 그래서 content 게시는 CopyObject가 아니라 PutObject(If-None-Match: *)로 한다 (design.md §4).
+  # 버전 경로 덮어쓰기 금지. 이 때문에 content/*에는 CopyObject를 못 쓴다 (design.md §4)
   statement {
     sid       = "DenyUnconditionalWritesToContent"
     effect    = "Deny"
@@ -87,7 +80,7 @@ data "aws_iam_policy_document" "content_oac" {
       values   = ["true"]
     }
 
-    # 멀티파트 업로드의 CreateMultipartUpload·UploadPart는 조건부 헤더를 받지 않으므로 제외한다.
+    # UploadPart 등은 조건부 헤더를 못 받는다
     condition {
       test     = "Bool"
       variable = "s3:ObjectCreationOperation"
@@ -129,10 +122,6 @@ resource "aws_s3_bucket_policy" "app" {
   depends_on = [aws_s3_bucket_public_access_block.app]
 }
 
-# ---------------------------------------------------------------------------
-# logs: CloudFront 표준 로그. 표준 로그(legacy) 전달은 버킷 ACL이 켜져 있어야 한다.
-# ---------------------------------------------------------------------------
-
 resource "aws_s3_bucket" "logs" {
   bucket = "${var.project}-logs-${local.bucket_suffix}"
 }
@@ -145,6 +134,7 @@ resource "aws_s3_bucket_public_access_block" "logs" {
   restrict_public_buckets = true
 }
 
+# legacy 표준 로그는 ACL이 켜져 있어야 전달된다
 resource "aws_s3_bucket_ownership_controls" "logs" {
   bucket = aws_s3_bucket.logs.id
   rule {

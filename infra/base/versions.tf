@@ -8,7 +8,7 @@ terraform {
     }
   }
 
-  # 0단계는 local state로 시작한다. compute 스택을 추가하는 1단계 전에 S3 backend로 옮긴다.
+  # TODO: compute 스택 전에 S3 backend로 이전
 }
 
 provider "aws" {

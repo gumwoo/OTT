@@ -1,22 +1,6 @@
-// HLS 요청 단위 측정 클라이언트 (E2 cold/warm 캐시 실험용).
-// 브라우저 없이 master → variant playlist → segment N개를 순서대로 받으며,
-// 요청마다 CloudFront 캐시 결과(X-Cache), 처리 POP, TTFB, 전체 시간, 바이트를 JSONL로 기록한다.
-//
-// 사용법:
-//   node measure/hls-probe.mjs --url https://<dist>.cloudfront.net/content/movie-100/runs/run-001/master.m3u8 \
-//     --location seoul --label cold --segments 5 --variant highest --out results/e2.jsonl
-//
-// 측정 성공 조건
-// - master, variant playlist, 요청한 segment가 모두 HTTP 200이어야 측정 성공(ok: true)이다.
-// - 하나라도 200이 아니거나 네트워크 오류가 나면 그 지점에서 멈추고 ok: false와 실패 사유를 남긴다.
-//   실패한 측정의 수치(startupProxyMs, hit/miss)는 성공 측정과 섞어 집계하지 않는다.
-// - 실패하면 종료 코드 1로 끝난다. 반복 측정 스크립트가 실패를 놓치지 않게 하기 위해서다.
-//
-// 주의
-// - Node fetch는 연결을 재사용한다. 첫 요청에는 DNS·TLS 시간이 포함되고 이후 요청에는 빠진다.
-//   이 차이를 기록하기 위해 요청 순번(seq)을 남긴다.
-// - TTFB는 응답 헤더 수신 시점(fetch resolve)까지의 시간이다.
-// - 측정 위치(--location)는 클라이언트가 실행된 곳을 사람이 지정한다. CloudFront POP은 응답 헤더에서 따로 기록한다.
+// E2 cold/warm 측정용. master → playlist → segment N개를 받아 요청별로 JSONL에 남긴다.
+// usage: node measure/hls-probe.mjs --url <master.m3u8> [--location seoul] [--label cold]
+//        [--segments 5] [--variant highest|lowest|N] [--out results/e2.jsonl]
 
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -83,7 +67,7 @@ async function timedGet(url, ctx, kind) {
     throw new ProbeFailure('NETWORK_ERROR', kind, path, null);
   }
   const ttfbMs = performance.now() - started;
-  // 헤더를 받은 뒤 본문을 받는 도중에도 연결이 끊길 수 있다. 이 경우도 실패 기록을 남긴다.
+  // 본문 수신 중 끊김도 실패로 남긴다
   let body = null;
   let bodyError = false;
   try {
@@ -96,7 +80,7 @@ async function timedGet(url, ctx, kind) {
   const record = {
     runId: ctx.runId,
     probeId: ctx.probeId,
-    seq: ctx.seq++,
+    seq: ctx.seq++, // 첫 요청만 DNS·TLS 포함
     at: new Date().toISOString(),
     location: ctx.location,
     label: ctx.label,
@@ -149,7 +133,6 @@ async function main() {
       if (firstSegmentDoneMs === null) firstSegmentDoneMs = performance.now() - started;
     }
   } catch (err) {
-    // 예상하지 못한 예외도 요약을 남긴 뒤 실패로 끝낸다. 측정 기록이 사라지지 않게 하기 위해서다.
     failure =
       err instanceof ProbeFailure
         ? { reason: err.reason, kind: err.kind, path: err.path, status: err.status }
@@ -170,8 +153,7 @@ async function main() {
     variant: variant?.resolution ?? null,
     requests: ctx.records.length,
     failedRequests: ctx.records.length - succeeded.length,
-    // 플레이어 startup의 근사치: master + playlist + 첫 segment 다운로드 완료까지. 디코딩·버퍼 정책은 포함하지 않는다.
-    // 측정이 실패하면 null로 둔다. 실패한 요청 시간이 성공 수치에 섞이지 않게 하기 위해서다.
+    // master + playlist + 첫 segment까지. 실패한 측정은 null
     startupProxyMs: ok && firstSegmentDoneMs !== null ? Math.round(firstSegmentDoneMs) : null,
     hits: succeeded.filter((r) => /^Hit/i.test(r.xCache ?? '')).length,
     misses: succeeded.filter((r) => /^Miss/i.test(r.xCache ?? '')).length,

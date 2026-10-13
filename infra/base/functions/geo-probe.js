@@ -1,6 +1,4 @@
-// 0단계 스모크 테스트 (design.md §10).
-// 질문: CloudFront-Viewer-Country를 Origin Request Policy에만 넣었을 때 viewer request 단계에서 읽히는가?
-// headerPresent가 false면 2단계의 국가 정책 설계를 시작 전에 다시 검토한다.
+// ORP에만 넣은 국가 헤더가 viewer request에서 보이는지 확인용 (design.md §10)
 function handler(event) {
   var headers = event.request.headers;
   var country = headers['cloudfront-viewer-country']

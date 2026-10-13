@@ -13,8 +13,7 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
-# 국가 헤더는 Origin Request Policy로만 노출하고 Cache Policy에는 넣지 않는다 (design.md §10 2단계).
-# 0단계에서는 /_probe/* 스모크 테스트에만 붙여서, viewer request Function에서 읽히는지 먼저 확인한다.
+# 국가 헤더를 캐시 키에 넣지 않으려고 Cache Policy가 아니라 여기에 둔다
 resource "aws_cloudfront_origin_request_policy" "viewer_country" {
   name    = "${var.project}-viewer-country"
   comment = "Expose CloudFront-Viewer-Country without adding it to the cache key"
@@ -71,9 +70,7 @@ resource "aws_cloudfront_distribution" "main" {
     origin_access_control_id = aws_cloudfront_origin_access_control.s3.id
   }
 
-  # 순서가 곧 우선순위다 (첫 번째 일치를 적용). 2단계에서 /content/test-*를 /content/*보다 앞에 넣는다.
-
-  # 1. 국가 헤더 스모크 테스트. 함수가 응답을 직접 만들기 때문에 origin(app)까지 가지 않는다.
+  # 첫 번째 일치가 적용된다. /content/test-*는 /content/*보다 앞에 둘 것
   ordered_cache_behavior {
     path_pattern             = "/_probe/*"
     target_origin_id         = "app"
@@ -89,7 +86,7 @@ resource "aws_cloudfront_distribution" "main" {
     }
   }
 
-  # 2. HLS 콘텐츠. 0단계에는 Signed Cookie를 걸지 않는다 (1단계에서 trusted key group 추가).
+  # TODO(1단계): trusted key group
   ordered_cache_behavior {
     path_pattern           = "/content/*"
     target_origin_id       = "content"
@@ -100,7 +97,6 @@ resource "aws_cloudfront_distribution" "main" {
     compress               = true
   }
 
-  # 기본: 플레이어 앱. SPA 재작성 함수는 여기에만 붙인다.
   default_cache_behavior {
     target_origin_id       = "app"
     viewer_protocol_policy = "redirect-to-https"

@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 # 원본 영상을 HLS 비트레이트 래더로 변환한다.
-#
-# 사용법: media/transcode.sh <input.mp4> <contentId> <version> [outDir]
-# 예시:   media/transcode.sh tears_of_steel_1080p.mov movie-100 1
-#         → out/movie-100/v1/master.m3u8, {1080p,720p,480p,360p}.m3u8, {variant}_{nnnnn}.ts
-#
-# 설계 메모
-# - 모든 variant의 키프레임을 6초 경계에 맞춘다 (force_key_frames + sc_threshold 0).
-#   그래야 화질 전환 시 세그먼트 경계가 일치한다.
-# - 한 디렉터리에 평평하게 출력해서 manifest의 참조가 모두 같은 디렉터리 상대 경로가 되게 한다.
-#   버전 디렉터리째 업로드해도 경로가 깨지지 않는다 (design.md §4).
+# usage: media/transcode.sh <input> <contentId> <version> [outDir]
 set -euo pipefail
 
 if [[ $# -lt 3 ]]; then
@@ -41,6 +32,7 @@ mkdir -p "$DEST"
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg not found" >&2; exit 1; }
 
+# 키프레임을 6초에 고정해야 variant끼리 세그먼트 경계가 맞는다
 ffmpeg -hide_banner -nostdin -i "$INPUT" \
   -filter_complex "[0:v]split=4[v1][v2][v3][v4];[v1]scale=w=1920:h=-2[v1o];[v2]scale=w=1280:h=-2[v2o];[v3]scale=w=854:h=-2[v3o];[v4]scale=w=640:h=-2[v4o]" \
   -map "[v1o]" -c:v:0 libx264 -b:v:0 5000k -maxrate:v:0 5350k -bufsize:v:0 7500k \

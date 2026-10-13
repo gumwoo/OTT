@@ -1,9 +1,4 @@
-// 재생 품질(QoE) 측정. design.md §9 SLI 정의를 따른다.
-// - startupMs:      loadSource 호출 → 첫 'playing'
-// - rebufferMs:     재생 시작 이후 'waiting' → 'playing' 구간의 합
-// - rebufferRatio:  rebufferMs / (재생 시작 이후 경과 시간)
-// - levelSwitches:  화질 전환 횟수
-// 0단계에서는 결과를 window.__qoe로 노출하고, 측정 자동화 도구가 읽어서 파일로 기록한다.
+// QoE 지표 정의는 design.md §9
 (function () {
   'use strict';
 
@@ -83,7 +78,7 @@
   });
 
   video.addEventListener('waiting', function () {
-    // 재생 시작 전의 대기는 startup에 포함되므로 rebuffer로 세지 않는다.
+    // 시작 전 대기는 startup에 들어간다
     if (!qoe || qoe.firstPlayingAt === null || qoe.waitingSince !== null) return;
     qoe.waitingSince = performance.now();
     qoe.rebufferCount += 1;
@@ -114,7 +109,7 @@
       hls.loadSource(src);
       hls.attachMedia(video);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = src; // Safari 네이티브 HLS. 화질 전환은 측정되지 않는다.
+      video.src = src; // Safari 네이티브 HLS, 화질 전환은 못 잰다
     } else {
       qoe.errors.push('hls-unsupported');
       return;
