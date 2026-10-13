@@ -5,6 +5,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import testingLibrary from 'eslint-plugin-testing-library';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import ui from './eslint/ui-rules.js';
 
 export default tseslint.config(
   { ignores: ['dist', 'coverage'] },
@@ -24,7 +25,10 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    plugins: { ui },
     rules: {
+      // FE-13, FE-14
+      'ui/no-ai-decoration': 'error',
       // FE-05
       'no-restricted-globals': [
         'error',
@@ -56,7 +60,7 @@ export default tseslint.config(
     extends: [testingLibrary.configs['flat/react']],
   },
   {
-    files: ['*.config.{js,ts}'],
+    files: ['*.config.{js,ts}', 'eslint/**/*.js'],
     languageOptions: { globals: globals.node },
   },
 );

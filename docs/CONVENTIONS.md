@@ -118,7 +118,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 
 ## 5. 프론트엔드 (FE)
 
-구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`.
+구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`. 화면 규칙은 [ui.md](ui.md).
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
@@ -134,6 +134,8 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | FE-10 | QoE 전송은 `fetch(..., { keepalive: true })`. `sendBeacon` 금지 | 공식(MDN) | `no-restricted-properties`(navigator.sendBeacon) | F, P |
 | FE-11 | Tailwind 클래스 이름을 동적으로 조합하지 않는다 | 공식(Tailwind) | 리뷰 | P |
 | FE-12 | 테스트: Testing Library는 role 쿼리 우선, API는 MSW로 모킹. 플레이어 E2E는 chrome 채널 | 공식, 블로그(Kent) | testing-library 린트, Playwright 설정 | P |
+| FE-13 | 색·글꼴은 `@theme` 토큰만. Tailwind 기본 팔레트는 끈다 | 공식(Tailwind theme), 설계(ui.md) | `--color-*: initial`, `ui/no-ai-decoration`(임의 색 값) | F, P |
+| FE-14 | AI 티 나는 장식 금지: 왼쪽 색 띠, 그라데이션, 유리 효과, 큰 모서리·그림자, 이모지 | 설계(사용자 결정, ui.md) | `ui/no-ai-decoration` + 스크린샷 리뷰 | F, P |
 
 ## 6. Python transcoder (PY)
 
@@ -212,6 +214,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | FE-05 | 컴포넌트에서 `fetch()` 직접 호출 | ESLint 실패 |
 | FE-08 | `react-router-dom` import | ESLint 실패 |
 | FE-10 | `navigator.sendBeacon` 사용 | ESLint 실패 |
+| FE-14 | `border-l-4`, `bg-clip-text`, 이모지 | ESLint 실패 |
 | PY-05 | `subprocess.run(cmd, shell=True)` | Ruff 실패 |
 | K8-02 | `component` 라벨 없는 Deployment | 매니페스트 검사 실패 |
 | GEN-01 | `terraform.tfvars` 수정 시도 | Claude 권한 거부 |

@@ -24,6 +24,9 @@ CONVENTIONS §11. 규칙을 일부러 어긴 코드로 검사가 실제로 막�
 | FE-06 | `useQuery({ queryKey, queryFn })` | ESLint `prefer-query-options` | 실패 |
 | FE-08 | `react-router-dom` import | ESLint (`tsc`도 모듈 없음으로 실패) | 실패 |
 | FE-10 | `navigator.sendBeacon` | ESLint | 실패 |
+| FE-13 | `bg-amber-50`, `text-white` (기본 팔레트) | Tailwind `--color-*: initial` | CSS가 생성되지 않음. 토큰 클래스(`bg-surface`)는 생성 |
+| FE-13 | `text-[#ff0000]` | ESLint `ui/no-ai-decoration` | 실패 |
+| FE-14 | 왼쪽 색 띠, 그라데이션, 그라데이션 글자, 유리 효과, `rounded-2xl`, `shadow-xl`, 이모지 | ESLint `ui/no-ai-decoration` | 실패 (7건, 템플릿 문자열 안의 클래스 포함) |
 | PY-04 | bare `except`, `except Exception` 후 `raise` without `from` | Ruff E722, BLE001, B904 | 실패 |
 | PY-05 | `subprocess.run(cmd, shell=True)` | Ruff S602 | 실패 |
 | TF-03 | 타입·설명 없는 `BadName` 변수 | tflint | 실패 (5건) |
