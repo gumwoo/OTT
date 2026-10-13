@@ -58,7 +58,7 @@ users              id, email(unique), password_hash, role(USER|ADMIN), created_a
 subscriptions      user_id(PK), plan(BASIC|PREMIUM), expires_at(BASIC은 NULL), updated_at
 contents           id('movie-100'), title, description, required_plan, duration_sec,
                    current_version(null 가능), max_published_version(null 가능),
-                   publish_epoch(기본 0), created_at
+                   publish_epoch(기본 0), last_allocated_version(기본 0), created_at
 content_versions   (content_id, version) PK, profile_version, source_hash, created_at
 transcode_jobs     id, content_id, version, publish_epoch, source_key, source_hash, profile_version,
                    status, failure_code, superseded_reason, error, k8s_job_name,
@@ -70,7 +70,8 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
                    level_switches, errors(jsonb), measured_at, received_at
 ```
 
-- 버전은 변환 요청 시점에 할당한다. `content_versions`의 PK가 유일성을 보장한다 (design.md §4).
+- 버전은 변환 요청 시점에 `contents` 행을 `FOR UPDATE`로 잠그고 `last_allocated_version`을 1 올려서 할당한다. 같은 잠금 안에서 `publish_epoch`를 읽어 작업에 기록한다. `content_versions`의 PK는 마지막 방어선이다 (design.md §4 "버전 할당과 게시 트랜잭션").
+- 등록·게시·롤백은 모두 `contents` 행 잠금으로 직렬화한다. 롤백은 `transcode_jobs` 행을 바꾸지 않는다 (잠금 순서가 publish와 반대가 되지 않게).
 - 구독: 가입하면 BASIC이고 **BASIC은 만료가 없다**(`expires_at` = NULL). PREMIUM만 만료일이 있고, 만료되면 BASIC으로 본다. 재생 권한 판단은 "PREMIUM이고 만료 전" 또는 "BASIC"으로 등급을 계산한 뒤 `required_plan`과 비교한다.
 - `transcode_jobs.status`: `REQUESTED → RUNNING → VALIDATED → UPLOADED → PUBLISHED`(또는 `PUBLISHED_SUPERSEDED`), 어느 단계에서든 `FAILED`. 실패하면 `failure_code`(`VERSION_DIRTY`, `DISK_FULL`, `SOURCE_HASH_MISMATCH`, `VALIDATION_FAILED`, `LOST`, `NOT_STARTED` 등)와 메시지를 남긴다.
 - 게시 조건은 두 가지다 (design.md §4 "버전 할당과 게시 트랜잭션").
@@ -361,6 +362,8 @@ Docker Compose만으로는 Kubernetes TokenReview·RBAC를 재현할 수 없고,
 | 가입 요청에 `role: ADMIN` 포함 | USER로 생성되는지 |
 | Signed Cookie 서명 | 단위 테스트 (정책 JSON, SHA256 지정, Resource 범위, 만료) |
 | 게시 동시성 (두 Job이 동시에 publish) | 통합 테스트 |
+| 같은 콘텐츠에 변환 요청 2개 동시 | 서로 다른 버전, 제약 위반 오류 없음 |
+| 변환 요청과 롤백이 동시에 들어옴 | 요청이 먼저면 그 작업은 `STALE_EPOCH`, 롤백이 먼저면 새 세대로 정상 공개 |
 | QoE 같은 `client_event_id` 재전송 | 한 번만 저장되는지 |
 | 운영 프로필에서 개발용 Job 토큰 설정 | 기동 실패하는지 |
 | 이미 객체가 있는 버전으로 transcoder 실행 | `FAILED(VERSION_DIRTY)`, 업로드 없음 (로컬 구현에서도 동일) |

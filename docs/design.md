@@ -259,9 +259,23 @@ Pod가 OOMKilled되거나 노드가 갑자기 종료되면 Job은 `FAILED`를 �
 
 ### 버전 할당과 게시 트랜잭션 [설계]
 
-- **버전은 작업 등록 시점(`REQUESTED`)에 할당한다.** 콘텐츠별로 증가하는 번호를 쓰고, `content_version (content_id, version)`에 **유일성 제약**을 건다. 같은 콘텐츠의 두 작업이 동시에 등록돼도 서로 다른 버전을 받고, 한 번 할당된 버전은 재사용하지 않는다 (실패한 작업의 버전 번호는 비워 둔다).
+- **버전은 작업 등록 시점(`REQUESTED`)에 할당한다.** 콘텐츠별 카운터(`content.last_allocated_version`)를 content 행 잠금 아래에서 1 올려서 쓴다. 한 번 할당된 버전은 재사용하지 않는다 (실패한 작업의 버전 번호는 비워 둔다).
+  - `content_version (content_id, version)`의 유일성 제약은 마지막 방어선이다. 제약만으로는 동시 등록이 서로 다른 버전을 받지 못한다. 둘 다 `max(version)+1`을 읽으면 한쪽은 제약 위반으로 실패할 뿐이다.
 - 할당된 버전은 `transcode_job.version`에 기록하고, Job은 그 버전 경로(`v{n}`)에만 쓴다.
-- 작업을 등록할 때 콘텐츠의 **게시 세대 번호(`publish_epoch`)**도 함께 `transcode_job.publish_epoch`에 기록한다.
+- 작업을 등록할 때 콘텐츠의 **게시 세대 번호(`publish_epoch`)**도 함께 `transcode_job.publish_epoch`에 기록한다. 버전 할당과 같은 잠금 안에서 읽어야 롤백과의 순서가 확정된다.
+- content 행을 바꾸는 세 동작(등록, 게시, 롤백)은 모두 **content 행을 `FOR UPDATE`로 잠그고** 시작한다. 그래서 세 동작은 DB에서 한 줄로 직렬화된다.
+
+```
+-- 작업 등록
+BEGIN
+  SELECT last_allocated_version, publish_epoch FROM content WHERE id = :contentId FOR UPDATE
+  UPDATE content SET last_allocated_version = last_allocated_version + 1 WHERE id = :contentId   -- :v
+  INSERT content_version (content_id, version, ...) VALUES (:contentId, :v, ...)
+  INSERT transcode_job (content_id, version, publish_epoch, status, ...) VALUES (:contentId, :v, :epoch, 'REQUESTED', ...)
+COMMIT
+```
+
+- 롤백과 등록이 동시에 오면 먼저 잠근 쪽이 이긴다. 등록이 먼저면 작업은 이전 세대를 기록하고 공개되지 않는다(`STALE_EPOCH`). 롤백이 먼저면 작업은 새 세대를 기록하고 정상 공개된다. 어느 쪽이든 "롤백 전에 요청된 작업은 롤백을 덮지 않는다"는 규칙과 맞다.
 - **게시는 한 트랜잭션**으로 처리한다.
 
 ```
@@ -290,6 +304,8 @@ COMMIT
 - 이전 초안의 `WHERE current_version = :expected`는 첫 게시에서 `NULL = NULL`이 참이 아니라서 **항상 실패**했다. content 행을 잠그고 읽은 뒤 규칙으로 판단하는 방식으로 바꿨다.
 - `PUBLISHED_SUPERSEDED`에는 사유(`STALE_EPOCH`, `OLDER_VERSION`)를 함께 기록한다.
 - **롤백**은 publish가 아니라 운영자 전용 동작으로 분리한다 (`/api/admin/contents/{id}/rollback`).
+  - 한 트랜잭션에서 content 행을 `FOR UPDATE`로 잠그고, 대상 버전을 확인한 뒤 포인터와 세대를 바꾼다.
+  - transcode_job 행은 바꾸지 않는다. publish는 job → content 순서로 잠그는데, 롤백이 content → job 순서로 잠그면 교착이 생길 수 있다.
   - `current_version`을 바꾸고 **`publish_epoch`를 1 올린다.** `max_published_version`은 줄이지 않는다 (지정한 버전이 더 높으면 그 값으로 올린다).
   - 대상 버전은 한 번 공개된 적 있는 버전, 또는 검증을 통과한 `PUBLISHED_SUPERSEDED` 버전만 허용한다. 롤백 때문에 공개되지 않은 v6을 운영자가 확인 후 공개하고 싶다면 이 동작으로 지정한다.
   - 롤백 뒤에 새로 요청한 변환은 새 세대와 v7 이상의 버전을 받으므로 정상 공개된다.
@@ -707,7 +723,8 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 | **v1 Cookie로 v2 경로 요청** (v2 복사 중·공개 전) | 거부 |
 | v1 → v2 공개 전환 후 재생 시작 | v2 Cookie 발급. 기존 v1 세션은 Cookie 만료 전까지 재생 유지 |
 | 버전 전환 반복 후 브라우저 Cookie | 이전 버전 Cookie 누적 수와 만료·삭제 동작 기록 |
-| 같은 콘텐츠의 작업 2개 동시 등록 | 서로 다른 버전 할당, 서로 다른 Job 이름 |
+| 같은 콘텐츠의 작업 2개 동시 등록 | 서로 다른 버전 할당, 서로 다른 Job 이름, 제약 위반 오류 없음 |
+| 작업 등록과 롤백이 동시에 들어옴 | 잠금 순서대로 직렬화. 등록이 먼저면 작업은 `STALE_EPOCH`, 롤백이 먼저면 새 세대로 정상 공개 |
 | 게시 트랜잭션 도중 API 강제 종료 | `current_version`과 작업 상태가 함께 롤백. 재요청 시 정상 게시 |
 | **첫 게시** (`current_version`이 NULL) | 정상 전환 |
 | 게시 커밋 후 같은 publish 재요청 | 포인터 변경 없이 같은 성공 결과 |
