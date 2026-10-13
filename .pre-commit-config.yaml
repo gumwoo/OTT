@@ -1,0 +1,28 @@
+# 설치: uv tool install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.0
+    hooks:
+      - id: ruff-check
+        files: ^transcoder/
+      - id: ruff-format
+        files: ^transcoder/
+
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -check -recursive infra
+        language: system
+        files: ^infra/.*\.tf$
+        pass_filenames: false
+      - id: prettier-web
+        name: prettier (web)
+        entry: npm --prefix web exec -- prettier --check --ignore-unknown
+        language: system
+        files: ^web/

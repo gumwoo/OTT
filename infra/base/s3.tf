@@ -1,10 +1,3 @@
-data "aws_caller_identity" "current" {}
-
-locals {
-  bucket_suffix = data.aws_caller_identity.current.account_id
-}
-
-
 resource "aws_s3_bucket" "content" {
   bucket = "${var.project}-content-${local.bucket_suffix}"
 }

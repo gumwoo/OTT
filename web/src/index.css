@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+/* FE-13: 기본 팔레트를 끄고 docs/ui.md의 토큰만 쓴다 */
+@theme {
+  --color-*: initial;
+  --color-bg: #0e0f11;
+  --color-surface: #17191c;
+  --color-surface-raised: #202328;
+  --color-line: #2c3036;
+  --color-text: #f2f3f5;
+  --color-text-muted: #9aa0a8;
+  --color-accent: #f0b429;
+  --color-danger: #ef5350;
+  --color-scrim: rgb(0 0 0 / 0.6);
+
+  --font-sans:
+    'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic',
+    sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+  }
+}

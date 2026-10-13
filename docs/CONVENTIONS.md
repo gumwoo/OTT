@@ -1,6 +1,6 @@
 # 개발 규칙 (CONVENTIONS)
 
-- 상태: v0.1 (2026-10-13). 프로젝트 골격을 만들며 실제 도구로 검증한 뒤 v1.0으로 확정한다.
+- 상태: v0.2 (2026-10-13). 0단계 골격에서 버전 조합과 검사를 실제로 돌려 확인했다 ([harness-verification.md](harness-verification.md)). 남은 검사(K8, FE-09·12)를 붙인 뒤 v1.0으로 확정한다.
 - 조사 원문: [research/](research/)
 
 ## 0. 원칙
@@ -50,6 +50,15 @@
 | 프론트 | TypeScript `~6.0`, ESLint 9, React 19, React Router 8 (Data mode), TanStack Query 5, Vite 8, Tailwind 4, Vitest 5, Playwright |
 | Python | uv, `requires-python` 명시, boto3 ≥ 1.35.2 |
 | Terraform | ≥ 1.11, AWS provider `~> 6.0` |
+
+0단계에서 실제로 빌드해서 확인한 조합 (2026-10-13)
+
+| 영역 | 버전 | 메모 |
+|---|---|---|
+| api | Boot 4.1.1, Gradle 9.7.1, JDK 17, spring-javaformat 0.0.48, Checkstyle 12.3.1, ArchUnit 1.5.1, PostgreSQL 17 | Checkstyle 13부터 JDK 21이 필요해서 12.3.1 |
+| web | TS 6.0.3, ESLint 9.39.5, React 19.3.0, React Router 8.4.0, TanStack Query 5.104.2, Vite 8.3.4, Tailwind 4.3.3, Vitest 5.0.4 | 조사 때의 TS·ESLint 제약이 그대로 유효 |
+| transcoder | Python 3.13, uv 0.13.0, Ruff 0.17.0, mypy 2.4.0, pytest 9.1.1 | |
+| infra | Terraform 1.16.5(CI), tflint 0.64.0, trivy 0.75.0 | 로컬 Terraform 1.9.8은 apply 전에 올려야 한다 |
 
 ## 3. 저장소 공통 (GEN)
 
@@ -109,7 +118,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 
 ## 5. 프론트엔드 (FE)
 
-구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`.
+구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`. 화면 규칙은 [ui.md](ui.md).
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
@@ -125,6 +134,8 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | FE-10 | QoE 전송은 `fetch(..., { keepalive: true })`. `sendBeacon` 금지 | 공식(MDN) | `no-restricted-properties`(navigator.sendBeacon) | F, P |
 | FE-11 | Tailwind 클래스 이름을 동적으로 조합하지 않는다 | 공식(Tailwind) | 리뷰 | P |
 | FE-12 | 테스트: Testing Library는 role 쿼리 우선, API는 MSW로 모킹. 플레이어 E2E는 chrome 채널 | 공식, 블로그(Kent) | testing-library 린트, Playwright 설정 | P |
+| FE-13 | 색·글꼴은 `@theme` 토큰만. Tailwind 기본 팔레트는 끈다 | 공식(Tailwind theme), 설계(ui.md) | `--color-*: initial`, `ui/no-ai-decoration`(임의 색 값) | F, P |
+| FE-14 | AI 티 나는 장식 금지: 왼쪽 색 띠, 그라데이션, 유리 효과, 큰 모서리·그림자, 이모지 | 설계(사용자 결정, ui.md) | `ui/no-ai-decoration` + 스크린샷 리뷰 | F, P |
 
 ## 6. Python transcoder (PY)
 
@@ -152,7 +163,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | TF-03 | 모든 variable·output에 type·description. snake_case, 단위 접미사, bool은 `enable_*` | 공식(Style Guide) | tflint | P |
 | TF-04 | `required_version >= 1.11`, S3 backend + `use_lockfile = true`. DynamoDB 락 테이블은 만들지 않는다 | 공식(CHANGELOG 1.11) | 리뷰 | P |
 | TF-05 | stack 간 값 전달은 SSM Parameter Store. `terraform_remote_state` 금지 | 공식(remote_state 경고) | 리뷰 | P |
-| TF-06 | 보안 검사는 trivy config (tfsec 금지) | 기여자(pre-commit-terraform), 공식(tfsec README) | pre-commit `terraform_trivy` | C, P |
+| TF-06 | 보안 검사는 trivy config (tfsec 금지). 예외는 `infra/.trivyignore`에 이유와 함께 | 기여자(pre-commit-terraform), 공식(tfsec README) | CI trivy (이미지 digest 고정, trivy-action은 2026-03 침해 이력) | P |
 | TF-07 | `apply`·`destroy`는 사람이 한다. Claude는 plan까지 | 설계 | Claude 권한 deny + 배포 역할 IAM 범위 | D |
 
 ## 8. Kubernetes / Helm (K8)
@@ -203,11 +214,12 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | FE-05 | 컴포넌트에서 `fetch()` 직접 호출 | ESLint 실패 |
 | FE-08 | `react-router-dom` import | ESLint 실패 |
 | FE-10 | `navigator.sendBeacon` 사용 | ESLint 실패 |
+| FE-14 | `border-l-4`, `bg-clip-text`, 이모지 | ESLint 실패 |
 | PY-05 | `subprocess.run(cmd, shell=True)` | Ruff 실패 |
 | K8-02 | `component` 라벨 없는 Deployment | 매니페스트 검사 실패 |
 | GEN-01 | `terraform.tfvars` 수정 시도 | Claude 권한 거부 |
 
-각 확인 결과(통과·실패 로그)는 해당 모듈을 만들 때 기록으로 남긴다. "어떤 위반을 얼마나 일찍 잡았는가"가 이 하네스의 성과 지표다.
+각 확인 결과는 [harness-verification.md](harness-verification.md)에 남긴다. "어떤 위반을 얼마나 일찍 잡았는가"가 이 하네스의 성과 지표다.
 
 ## 12. 브랜치·커밋·PR (GH)
 
@@ -229,7 +241,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 혼자 하는 프로젝트라 자기 PR을 승인할 수 없으므로 승인 수는 0으로 두고, **CI 통과를 merge 조건**으로 삼는다.
 
 - PR 없이 main에 push 금지, force push 금지, 브랜치 삭제 금지
-- 필수 상태 검사: CI 워크플로의 job들 (이름은 워크플로를 만들 때 확정)
+- 필수 상태 검사: `ci` 워크플로의 `ci` job과 `pr-title` 워크플로의 `conventional` job. `ci` job은 바뀐 모듈의 job만 돌리고 결과를 모은다 (건너뛴 job은 통과로 친다)
 - 선형 이력 유지 (squash merge)
 
 필수 상태 검사는 CI 워크플로가 있어야 걸 수 있으므로, **첫 CI 워크플로를 만들 때 함께 설정한다.** 그 전까지의 커밋(설계 문서 단계)은 main에 직접 올렸다.

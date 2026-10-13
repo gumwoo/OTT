@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+		"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+		"https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+	<module name="TreeWalker">
+		<!-- SP-11 -->
+		<module name="IllegalImport">
+			<property name="illegalPkgs" value="lombok"/>
+		</module>
+		<!-- SP-08, 자동설정을 끄는 @EnableJdbcHttpSession 금지 (app-design.md §5) -->
+		<module name="IllegalImport">
+			<property name="illegalPkgs" value=""/>
+			<property name="illegalClasses"
+				value="jakarta.transaction.Transactional, javax.transaction.Transactional, org.springframework.session.jdbc.config.annotation.web.http.EnableJdbcHttpSession"/>
+		</module>
+	</module>
+</module>

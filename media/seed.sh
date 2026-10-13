@@ -39,14 +39,19 @@ export -f sha256_b64
 
 upload_one() {
   local file=$1 content_type=$2
-  local key="$PREFIX/$(basename "$file")"
-  local local_sum remote_sum err
+  local key local_sum remote_sum err
+  key="$PREFIX/$(basename "$file")"
   local_sum=$(sha256_b64 "$file")
-  if err=$(aws s3api put-object       --bucket "$BUCKET" --key "$key" --body "$file"       --content-type "$content_type" --cache-control "$CACHE_CONTROL"       --checksum-sha256 "$local_sum"       --if-none-match '*' 2>&1 >/dev/null); then
+  if err=$(aws s3api put-object \
+    --bucket "$BUCKET" --key "$key" --body "$file" \
+    --content-type "$content_type" --cache-control "$CACHE_CONTROL" \
+    --checksum-sha256 "$local_sum" \
+    --if-none-match '*' 2>&1 >/dev/null); then
     echo "uploaded $key"
   elif [[ "$err" == *PreconditionFailed* ]]; then
     # 내용이 같을 때만 재사용으로 친다
-    if ! remote_sum=$(aws s3api head-object --bucket "$BUCKET" --key "$key"         --checksum-mode ENABLED --query ChecksumSHA256 --output text 2>&1); then
+    if ! remote_sum=$(aws s3api head-object --bucket "$BUCKET" --key "$key" \
+      --checksum-mode ENABLED --query ChecksumSHA256 --output text 2>&1); then
       echo "FAILED $key: exists, but head-object failed: $remote_sum"
     elif [[ "$remote_sum" == "$local_sum" ]]; then
       echo "reused $key (already exists with same content)"
@@ -62,6 +67,7 @@ export BUCKET PREFIX CACHE_CONTROL
 
 upload_group() {
   local pattern=$1 content_type=$2
+  # shellcheck disable=SC2016 # 안쪽 bash에서 확장된다
   find "$SRC" -maxdepth 1 -type f -name "$pattern" ! -name master.m3u8 -print0 \
     | xargs -0 -P "$PARALLEL" -I{} bash -c 'upload_one "$1" "$2"' _ {} "$content_type" \
     | tee -a "$RESULTS"
