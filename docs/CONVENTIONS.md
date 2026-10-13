@@ -212,13 +212,27 @@
 
 ### PR 자동 검사
 
+원칙: **검사할 대상이 생긴 시점에 건다.** 코드가 없을 때 건 검사는 항상 통과해서 아무것도 막지 못한다. 그리고 **외부 서비스 키가 필요한 도구는 기본으로 쓰지 않는다** (공개 저장소라 GitHub 내장 기능으로 대부분 대체된다).
+
 | 종류 | 도구 | 역할 | 도입 시점 | 상태 |
 |---|---|---|---|---|
-| CI 체크 | GitHub Actions | 모듈별 빌드·테스트·lint·ArchUnit·Terraform 검사. 실패하면 merge 차단 (§10 "P") | 각 모듈 골격과 함께 | 필수 |
-| PR 제목 검사 | Conventional Commits 검사 action | GH-04 | 첫 CI와 함께 | 필수 |
-| 의존성 업데이트 | Dependabot | GitHub Actions(SHA 고정 갱신, GA-01), Gradle, npm 의존성 업데이트 PR. uv 지원 여부는 도입 시 확인 | 첫 CI와 함께 | 필수 |
-| 비밀 유출 검사 | GitHub secret scanning + push protection | 키·토큰 커밋 차단 (GEN-01 보강) | 지금 설정 가능 | 필수 |
-| 코드 취약점 검사 | CodeQL | Java·TypeScript·Python·Actions 워크플로 분석 | 첫 CI와 함께 | 권장 (비공개 저장소면 요금제 확인) |
-| Terraform 계획 댓글 | GitHub Actions + `terraform plan` | 인프라 변경 내용을 PR 댓글로. apply는 하지 않는다 (TF-07) | compute 스택 작업 시 | 권장 |
-| 인프라 비용 변화 | Infracost | 변경에 따른 예상 비용 증감을 PR 댓글로 | compute 스택 작업 시 | 선택 |
-| AI 코드 리뷰 | Claude Code GitHub Action 등 | 사람 리뷰어 대신 diff 리뷰 댓글. 정확성·요구사항 누락 위주 | 필요해지면 | 선택 |
+| 비밀 유출 검사 | GitHub secret scanning + push protection | 키·토큰 커밋 차단 (GEN-01 보강). 공개 저장소라 무료 | **지금** (저장소 설정에서 켬) | 필수 |
+| CI 체크 | GitHub Actions | 모듈별 빌드·테스트·lint·ArchUnit 검사. 바뀐 경로의 모듈만 실행. 실패하면 merge 차단 (§10 "P") | 0단계, 각 모듈 골격과 함께 | 필수 |
+| PR 제목 검사 | Conventional Commits 검사 action | GH-04 | 0단계, 첫 CI와 함께 | 필수 |
+| main 보호 | GitHub ruleset | GH-01, GH-05, CI 통과 필수 | 0단계, 첫 CI와 함께 | 필수 |
+| 의존성 업데이트 | Dependabot | GitHub Actions(SHA 고정 갱신, GA-01), Gradle, npm. **생태계별 묶음(group) + 주간 일정**으로 PR 수를 줄인다. uv 지원 여부는 도입 시 확인 | 0단계, 첫 CI와 함께 | 필수 |
+| 코드 취약점 검사 | CodeQL | Java·TypeScript·Python·Actions 워크플로 분석. 공개 저장소라 무료 | 0단계, 첫 CI와 함께 | 필수 |
+| 커버리지 표시 | Actions job 요약 / PR 댓글 (JaCoCo, Vitest coverage) | 커버리지와 변화를 PR에 표시. **외부 서비스(Codecov 등) 없이** 내장 기능으로 | 테스트가 쌓이면 | 필수 |
+| Terraform plan 댓글 | GitHub Actions + `terraform plan` | 인프라 변경 내용을 PR 댓글로. apply는 하지 않는다 (TF-07) | compute 스택 작업 시 | 권장 |
+| 인프라 비용 변화 | Infracost | 예상 비용 증감을 PR 댓글로. 외부 API 키 필요, plan의 리소스 정보가 Infracost로 전송됨 | compute 스택 작업 시 **다시 판단** | 보류 |
+| AI 코드 리뷰 | Claude Code GitHub Action 등 | diff 리뷰 댓글. 실행마다 API 비용, 또는 외부 앱에 저장소 접근 권한 필요. AI가 쓴 코드를 AI가 리뷰하는 구조라 효과 불확실 | PR이 쌓인 뒤 **다시 판단** | 보류 |
+
+### Terraform plan 댓글의 전제 조건
+
+CI의 AWS 접근은 사용자의 로컬 로그인(SSO 세션)과 무관하다. 워크플로가 실행될 때마다 GitHub OIDC로 IAM 역할을 받아 임시 자격 증명으로 작업한다. 대신 다음이 먼저 갖춰져야 한다.
+
+1. **원격 상태**: 지금 상태 파일은 로컬에 있어서 CI가 볼 수 없다. S3 backend(`use_lockfile = true`)로 옮긴다 (TF-04, Terraform ≥ 1.11).
+2. **plan 전용 역할**: 배포 역할과 분리한 읽기 전용 역할. trust policy는 이 저장소의 `pull_request` 이벤트로 제한한다.
+3. **락 처리**: S3 네이티브 락은 plan도 락 파일을 쓴다. 둘 중 하나를 고른다.
+   - plan 역할에 **락 파일 경로에 한정한** 쓰기·삭제 권한을 준다.
+   - PR plan은 `-lock=false`로 돌린다 (동시 apply와 겹칠 수 있다는 점을 감수).
