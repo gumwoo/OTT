@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.9"
+  required_version = ">= 1.11"
 
   required_providers {
     aws = {
@@ -9,16 +9,4 @@ terraform {
   }
 
   # TODO: compute 스택 전에 S3 backend로 이전
-}
-
-provider "aws" {
-  region = var.region
-
-  default_tags {
-    tags = {
-      Project   = var.project
-      Stack     = "base"
-      ManagedBy = "terraform"
-    }
-  }
 }

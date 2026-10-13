@@ -1,9 +1,11 @@
 output "distribution_id" {
-  value = aws_cloudfront_distribution.main.id
+  description = "CloudFront distribution ID"
+  value       = aws_cloudfront_distribution.main.id
 }
 
 output "distribution_domain" {
-  value = aws_cloudfront_distribution.main.domain_name
+  description = "CloudFront 기본 도메인"
+  value       = aws_cloudfront_distribution.main.domain_name
 }
 
 output "geo_probe_url" {
@@ -12,17 +14,21 @@ output "geo_probe_url" {
 }
 
 output "content_bucket" {
-  value = aws_s3_bucket.content.bucket
+  description = "HLS 산출물 버킷 이름"
+  value       = aws_s3_bucket.content.bucket
 }
 
 output "app_bucket" {
-  value = aws_s3_bucket.app.bucket
+  description = "플레이어 앱 버킷 이름"
+  value       = aws_s3_bucket.app.bucket
 }
 
 output "logs_bucket" {
-  value = aws_s3_bucket.logs.bucket
+  description = "CloudFront 표준 로그 버킷 이름"
+  value       = aws_s3_bucket.logs.bucket
 }
 
 output "github_deploy_role_arn" {
-  value = local.enable_github_oidc ? aws_iam_role.deploy[0].arn : null
+  description = "GitHub Actions 배포 역할 ARN (github_repo가 없으면 null)"
+  value       = local.enable_github_oidc ? aws_iam_role.deploy[0].arn : null
 }

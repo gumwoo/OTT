@@ -19,6 +19,7 @@ jobs:
       api: ${{ steps.diff.outputs.api }}
       web: ${{ steps.diff.outputs.web }}
       transcoder: ${{ steps.diff.outputs.transcoder }}
+      infra: ${{ steps.diff.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,7 +36,7 @@ jobs:
             all=true
           fi
           has() { { $all || grep -qE "^($1/|\.github/workflows/ci\.yml)" <<<"$files"; } && echo true || echo false; }
-          for m in api web transcoder; do
+          for m in api web transcoder infra; do
             echo "$m=$(has "$m")"
           done >> "$GITHUB_OUTPUT"
 
@@ -112,9 +113,34 @@ jobs:
       - run: uv run mypy src tests
       - run: uv run pytest
 
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      TFLINT_IMAGE: ghcr.io/terraform-linters/tflint:v0.64.0@sha256:1c595f42d794c32c45a6ea8b58655fd66433d4ca3b1bc631c574a48d120bd19f
+      TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.5"
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -lockfile=readonly -input=false
+        working-directory: infra/base
+      - run: terraform validate
+        working-directory: infra/base
+      - run: docker run --rm -v "$PWD:/data" -w /data/base "$TFLINT_IMAGE" --config=/data/.tflint.hcl
+      # trivy-action은 2026-03 공급망 침해 이력이 있어 이미지 digest로 고정한다 (GHSA-69fq-xp46-6x23)
+      - run: docker run --rm -v "$PWD:/data" -w /data "$TRIVY_IMAGE" config --exit-code 1 --severity HIGH,CRITICAL --ignorefile .trivyignore base
+
   ci:
     if: always()
-    needs: [changes, api, web, transcoder]
+    needs: [changes, api, web, transcoder, infra]
     runs-on: ubuntu-24.04
     steps:
       - name: all required jobs passed or skipped
