@@ -73,13 +73,27 @@ upload_group() {
     | tee -a "$RESULTS"
 }
 
-# master는 마지막에 올린다 (반쯤 올라간 버전이 재생되지 않게)
+summary() {
+  uploaded=$(grep -c '^uploaded' "$RESULTS" || true)
+  reused=$(grep -c '^reused' "$RESULTS" || true)
+  failed=$(grep -c '^FAILED' "$RESULTS" || true)
+  echo "uploaded=$uploaded reused=$reused failed=$failed"
+}
+
+# 앞 단계가 하나라도 실패하면 그 파일을 참조하는 playlist·master를 올리지 않는다
+stop_if_failed() {
+  if grep -q '^FAILED' "$RESULTS"; then
+    echo "stopped before $1" >&2
+    summary
+    exit 1
+  fi
+}
+
 upload_group '*.ts' 'video/mp2t'
+stop_if_failed "variant playlists"
 upload_group '*.m3u8' 'application/vnd.apple.mpegurl'
+stop_if_failed "master"
 upload_one "$SRC/master.m3u8" 'application/vnd.apple.mpegurl' | tee -a "$RESULTS"
 
-uploaded=$(grep -c '^uploaded' "$RESULTS" || true)
-reused=$(grep -c '^reused' "$RESULTS" || true)
-failed=$(grep -c '^FAILED' "$RESULTS" || true)
-echo "uploaded=$uploaded reused=$reused failed=$failed"
+summary
 [[ "$failed" -eq 0 ]]

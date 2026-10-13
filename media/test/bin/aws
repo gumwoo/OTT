@@ -13,6 +13,7 @@ done
 obj="$FAKE_S3/$(tr '/' '_' <<<"$key")"
 case "$op" in
   put-object)
+    [[ -n "${FAKE_S3_FAIL:-}" && "$key" == *"$FAKE_S3_FAIL"* ]] && { echo "InternalError (injected)" >&2; exit 254; }
     [[ "$inm" == "*" ]] || { echo "AccessDenied" >&2; exit 254; }
     [[ -e "$obj" ]] && { echo "An error occurred (PreconditionFailed) when calling the PutObject operation" >&2; exit 254; }
     cp "$body" "$obj" && echo "$sum" >"$obj.sum" ;;

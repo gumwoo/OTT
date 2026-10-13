@@ -35,7 +35,22 @@ check "first upload" "$(run_seed "$WORK/v1")" "0|uploaded=4 reused=0 failed=0"
 check "rerun reuses identical objects" "$(run_seed "$WORK/v1")" "0|uploaded=0 reused=4 failed=0"
 
 head -c 1024 /dev/urandom >"$WORK/v1/360p_00001.ts"
-check "different content on existing key fails" "$(run_seed "$WORK/v1")" "1|uploaded=0 reused=3 failed=1"
+check "different content on existing key stops before playlists" "$(run_seed "$WORK/v1")" "1|uploaded=0 reused=1 failed=1"
+
+has() { [[ -e "$FAKE_S3/content_movie-100_v1_$1" ]] && echo yes || echo no; }
+
+FAKE_S3="$WORK/s3-fail"
+mkdir -p "$FAKE_S3"
+make_version "$WORK/v2"
+check "segment upload failure" "$(FAKE_S3_FAIL=360p_00001.ts run_seed "$WORK/v2")" "1|uploaded=1 reused=0 failed=1"
+check "no variant playlist after segment failure" "$(has 360p.m3u8)" "no"
+check "no master after segment failure" "$(has master.m3u8)" "no"
+check "rerun completes the version" "$(run_seed "$WORK/v2")" "0|uploaded=3 reused=1 failed=0"
+
+FAKE_S3="$WORK/s3-fail-playlist"
+mkdir -p "$FAKE_S3"
+check "playlist upload failure" "$(FAKE_S3_FAIL=360p.m3u8 run_seed "$WORK/v2")" "1|uploaded=2 reused=0 failed=1"
+check "no master after playlist failure" "$(has master.m3u8)" "no"
 
 make_version "$WORK/broken"
 rm "$WORK/broken/360p_00001.ts"
