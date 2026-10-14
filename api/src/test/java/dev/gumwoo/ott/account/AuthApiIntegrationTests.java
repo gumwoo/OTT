@@ -2,6 +2,9 @@ package dev.gumwoo.ott.account;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
+import java.util.stream.Stream;
 
 import dev.gumwoo.ott.support.Browser;
 import dev.gumwoo.ott.support.Browser.Response;
@@ -63,6 +66,24 @@ class AuthApiIntegrationTests extends IntegrationTest {
 
 		assertThat(response.status()).isEqualTo(409);
 		assertThat(response.json().get("code").asString()).isEqualTo("EMAIL_TAKEN");
+	}
+
+	// 둘 다 중복 확인을 통과해도 유일성 제약에서 409로 끝나야 한다
+	@Test
+	void concurrentSignupWithSameEmailCreatesOneAccount() {
+		String email = uniqueEmail();
+		Browser first = browser();
+		Browser second = browser();
+		CyclicBarrier start = new CyclicBarrier(2);
+
+		List<Integer> statuses = Stream.of(first, second).map((browser) -> CompletableFuture.supplyAsync(() -> {
+			await(start);
+			return browser.post("/api/auth/signup", credentials(email, PASSWORD)).status();
+		})).toList().stream().map(CompletableFuture::join).toList();
+
+		assertThat(statuses).containsExactlyInAnyOrder(201, 409);
+		assertThat(this.jdbc.queryForObject("select count(*) from users where email = ?", Integer.class, email))
+			.isEqualTo(1);
 	}
 
 	@Test
@@ -207,6 +228,15 @@ class AuthApiIntegrationTests extends IntegrationTest {
 		Response response = new Browser(this.port).get("/api/me");
 
 		assertThat(response.setCookie("SESSION")).isEmpty();
+	}
+
+	private static void await(CyclicBarrier barrier) {
+		try {
+			barrier.await();
+		}
+		catch (Exception ex) {
+			throw new IllegalStateException(ex);
+		}
 	}
 
 }
