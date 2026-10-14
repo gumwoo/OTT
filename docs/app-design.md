@@ -147,7 +147,8 @@ formLogin 대신 `POST /api/auth/login`(JSON) 컨트롤러로 로그인한다. �
 3. `SecurityContextRepository.saveContext()`
 4. 응답 후 프론트가 CSRF 토큰을 다시 받는다 (§5 CSRF 흐름 3)
 
-- [가설] 2번을 직접 해야 하는지(수동 로그인에서 프레임워크가 세션 전략을 호출해 주지 않는지)는 문서에 없다. "로그인 전후 세션 ID가 다른지"를 통합 테스트로 확인하고, 다르지 않으면 직접 변경한다.
+- [확인] 2번은 직접 해야 한다. `ChangeSessionIdAuthenticationStrategy`를 빼고 돌리면 "이미 세션이 있는 상태에서 로그인하면 세션 ID가 바뀐다" 통합 테스트가 실패한다 (2026-10-14). 그래서 `LoginSession`이 세션 ID 변경과 CSRF 토큰 폐기를 함께 호출한다.
+- CSRF 저장소가 쿠키라서 서버는 토큰을 기억하지 않고 쿠키 값과 헤더 값이 같은지만 본다. 로그인 뒤 옛 토큰이 막히는 이유는 로그인 응답이 `XSRF-TOKEN` 쿠키를 지우기 때문이다. 앱 메모리에 남은 옛 토큰을 헤더로 보내면 쿠키가 없어 403 `CSRF_INVALID`가 된다.
 
 ## 6. API
 
