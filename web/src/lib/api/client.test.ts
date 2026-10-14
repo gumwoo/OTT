@@ -13,6 +13,26 @@ afterEach(() => {
 });
 
 describe('apiFetch', () => {
+  it('refreshes the CSRF token and retries an unsafe request only once', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: URL, init: RequestInit) => {
+        calls.push(`${init.method} ${url.pathname}`);
+        return Promise.resolve(
+          url.pathname === '/api/csrf'
+            ? new Response(null, { status: 204 })
+            : Response.json({ code: 'CSRF_INVALID' }, { status: 403 }),
+        );
+      }),
+    );
+
+    await expect(apiFetch('/api/qoe', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      code: 'CSRF_INVALID',
+    });
+    expect(calls).toEqual(['POST /api/qoe', 'GET /api/csrf', 'POST /api/qoe']);
+  });
+
   it('returns the body on 2xx', async () => {
     mockFetch(200, { id: 'movie-100' });
     await expect(apiFetch('/api/contents/movie-100')).resolves.toEqual({ id: 'movie-100' });

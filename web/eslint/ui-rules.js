@@ -7,6 +7,7 @@ const BANNED_CLASSES = [
   [/(^|\s)rounded-(2xl|3xl)(\s|$)/, '큰 둥근 모서리'],
   [/(^|\s)shadow-(lg|xl|2xl)(\s|$)/, '큰 그림자'],
   [/-\[(#|rgb|hsl|oklch)/, '임의 색 값 (토큰을 쓴다)'],
+  [/(^|\s)animate-(pulse|ping|bounce)(\s|$)/, '깜빡이는 장식'],
 ];
 
 const EMOJI = /\p{Extended_Pictographic}/u;

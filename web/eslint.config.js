@@ -27,6 +27,11 @@ export default tseslint.config(
     },
     plugins: { ui },
     rules: {
+      // React Router는 redirect·Response를 던져서 흐름을 바꾼다
+      '@typescript-eslint/only-throw-error': [
+        'error',
+        { allow: [{ from: 'lib', name: 'Response' }] },
+      ],
       // FE-13, FE-14
       'ui/no-ai-decoration': 'error',
       // FE-05

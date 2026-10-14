@@ -101,7 +101,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
-| SP-01 | 포맷은 spring-javaformat | 팀 샘플(petclinic) | `checkFormat` (Gradle `check`) | F, P |
+| SP-01 | 포맷은 spring-javaformat. 한글 주석은 한 줄 90자 안으로 쓴다 (길면 `format` 결과를 `checkFormat`이 다시 거부한다. 2026-10-14 두 번 겪음) | 팀 샘플(petclinic), 설계 | `checkFormat` (Gradle `check`) | F, P |
 | SP-02 | `web` 패키지는 Repository에 직접 의존하지 않는다. 상태를 바꾸는 작업은 서비스를 거친다 | 기여자(restbucks), 설계 | ArchUnit | S, P |
 | SP-03 | 기능 패키지 사이에 순환 의존이 없다. 다른 기능의 `web`·`infra`를 참조하지 않는다 | 공식(Boot 구조), 설계 | ArchUnit slices | S, P |
 | SP-04 | 생성자 주입만. 필드 `@Autowired` 금지 | 기여자 전부 | ArchUnit `NO_CLASSES_SHOULD_USE_FIELD_INJECTION` | S, P |
