@@ -29,6 +29,13 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
 	implementation("org.flywaydb:flyway-database-postgresql")
+	implementation(platform("software.amazon.awssdk:bom:2.55.16"))
+	// 쿠키 서명 유틸리티만 쓰므로 HTTP 클라이언트는 빼낸다
+	implementation("software.amazon.awssdk:cloudfront") {
+		exclude(group = "software.amazon.awssdk", module = "apache-client")
+		exclude(group = "software.amazon.awssdk", module = "apache5-client")
+		exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+	}
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")

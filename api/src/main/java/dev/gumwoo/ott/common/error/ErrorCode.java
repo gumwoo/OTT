@@ -17,7 +17,11 @@ public enum ErrorCode {
 
 	FORBIDDEN(HttpStatus.FORBIDDEN, "권한이 없습니다"),
 
+	PLAN_REQUIRED(HttpStatus.FORBIDDEN, "더 높은 구독 등급이 필요합니다"),
+
 	NOT_FOUND(HttpStatus.NOT_FOUND, "찾을 수 없습니다"),
+
+	NOT_PUBLISHED(HttpStatus.NOT_FOUND, "아직 공개되지 않은 콘텐츠입니다"),
 
 	METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 요청 방식입니다"),
 

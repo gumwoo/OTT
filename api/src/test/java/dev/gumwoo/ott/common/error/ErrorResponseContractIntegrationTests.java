@@ -16,7 +16,8 @@ class ErrorResponseContractIntegrationTests extends IntegrationTest {
 			"GET, /api/auth/login, , , 405, METHOD_NOT_ALLOWED",
 			"PUT, /api/me/subscription, not json, application/json, 400, BAD_REQUEST",
 			"PUT, /api/me/subscription, plan=PREMIUM, text/plain, 415, UNSUPPORTED_MEDIA_TYPE",
-			"GET, /api/test/boom, , , 500, INTERNAL_ERROR" })
+			"GET, /api/test/boom, , , 500, INTERNAL_ERROR", "GET, /api/me;x=1, , , 400, BAD_REQUEST",
+			"POST, /api/playback/not-a-uuid/refresh, , , 400, BAD_REQUEST" })
 	void everyErrorHasCode(String method, String path, String body, String contentType, int status, String code) {
 		Browser browser = "/api/me".equals(path) ? new Browser(this.port) : loggedIn(uniqueEmail());
 

@@ -177,6 +177,12 @@ formLogin 대신 `POST /api/auth/login`(JSON) 컨트롤러로 로그인한다. �
 5. 응답: `{ sessionId, manifestUrl: "/content/{id}/v{n}/master.m3u8", expiresAt }`
 
 - 재생 TTL은 30분으로 시작하고, 플레이어가 TTL의 절반마다 refresh를 호출한다. 값은 실험하며 조정한다.
+- `min(재생 TTL, 구독 만료)`는 PREMIUM 콘텐츠에만 적용한다. BASIC 콘텐츠는 PREMIUM이 끝나도 볼 수 있으므로 구독 만료로 자르지 않는다.
+- `GET /api/contents/{id}`는 공개된 콘텐츠만 보여준다 (아니면 404 `NOT_FOUND`). `NOT_PUBLISHED`는 재생 요청에서만 나온다.
+- `CloudFront-Viewer-Country`가 대문자 두 글자가 아니면 기록하지 않는다 (NULL).
+- 만료 시각은 초 단위로 자른다. 정책의 `DateLessThan`이 초 단위라서, 응답에 소수점까지 주면 실제 만료가 표시보다 앞선다.
+- refresh 횟수에는 상한을 두지 않는다. 매번 구독을 다시 확인하므로 등급이 내려가거나 만료되면 거기서 멈춘다.
+- 재생 요청은 공개 전 콘텐츠의 존재를 `NOT_PUBLISHED`로 드러낸다. 문서 순서(등급 확인 → 공개 확인)를 따른 결과이고, 콘텐츠 ID는 비밀이 아니므로 받아들인다.
 - 국가 차단은 여기서 하지 않는다. Cookie는 발급되고 Edge가 403을 낸다. 플레이어는 사유 코드(`GEO_BLOCKED` 등)를 보고 안내 문구를 띄운다.
 
 Cookie 갱신(`POST /api/playback/{sessionId}/refresh`):
@@ -257,7 +263,8 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 
 - RSA 개인키로 custom policy를 서명한다. SHA-256을 쓰고 `CloudFront-Hash-Algorithm=SHA256` 쿠키를 함께 보낸다.
 - AWS SDK for Java 2.x의 `CustomSignerRequest.Builder`에 `hashAlgorithm(SigningHashAlgorithm)`이 있다. **기본값이 SHA1이므로 반드시 SHA256을 지정한다.** [확인]
-- SDK가 반환하는 쿠키 묶음에 `CloudFront-Hash-Algorithm`이 포함되는지는 확인하지 못했다. 고정할 SDK 버전에서 확인하고, 없으면 그 쿠키만 직접 붙인다. [확인 필요]
+- [확인] SDK 2.55.16의 `CookiesForCustomPolicy.hashAlgorithmHeaderValue()`가 `CloudFront-Hash-Algorithm=SHA256`을 돌려준다. 단위 테스트에서 공개키로 서명을 검증해 SHA256withRSA로는 맞고 SHA1withRSA로는 틀린 것을 확인했다 (2026-10-14).
+- 비공개 키는 PKCS#8 PEM(`BEGIN PRIVATE KEY`)만 받는다. `ott.playback.signing.private-key`에 파일 위치를 준다. `local` 프로필은 키 없이 기동 시 임시 키를 만든다 (`ephemeral-key=true`). 운영에서 키가 없으면 기동을 실패시킨다.
 - 최종 확인은 실제 CloudFront에서 쿠키 4개로 manifest와 segment가 모두 열리는지 보는 통합 테스트다.
 - 개인키는 AWS Secrets Manager에 두고 시작 시 읽는다. 로컬은 개발용 키 파일.
 - 서명 로직은 단위 테스트로 검증한다: 정책 JSON 형태, Resource가 버전 경로로 제한되는지, 만료 시각 계산.

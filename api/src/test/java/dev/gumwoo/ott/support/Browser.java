@@ -32,6 +32,8 @@ public final class Browser {
 
 	private String csrfHeaderOverride;
 
+	private final Map<String, String> extraHeaders = new LinkedHashMap<>();
+
 	public Browser(int port) {
 		this.baseUrl = "http://localhost:" + port;
 	}
@@ -55,6 +57,7 @@ public final class Browser {
 		if (contentType != null) {
 			request.header("Content-Type", contentType);
 		}
+		this.extraHeaders.forEach(request::header);
 		if (!this.cookies.isEmpty()) {
 			request.header("Cookie",
 					this.cookies.entrySet()
@@ -84,6 +87,11 @@ public final class Browser {
 
 	public Browser withoutCsrfHeader() {
 		this.sendCsrfHeader = false;
+		return this;
+	}
+
+	public Browser header(String name, String value) {
+		this.extraHeaders.put(name, value);
 		return this;
 	}
 
