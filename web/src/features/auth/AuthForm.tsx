@@ -44,7 +44,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <main className="relative grid min-h-[calc(100dvh-5rem)] place-items-center px-6 py-24">
+    <main className="relative grid flex-1 place-items-center px-6 py-24">
       <img
         src="/artwork/spring/still.jpg"
         alt=""

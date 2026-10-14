@@ -7,7 +7,7 @@ JDK 17, Node 24, Docker, uv, ffmpeg가 필요하다.
 ```bash
 docker compose up -d                 # postgres(5434), content-server(8081)
 cd api && ./gradlew bootRun --args='--spring.profiles.active=local'
-cd web && npm ci && npm run dev
+cd web && npm ci && npm run dev     # http://localhost:5180
 ```
 
 HLS 변환만 따로 해볼 때:
@@ -33,7 +33,7 @@ docker compose exec -T postgres psql -U ott -d ott < scripts/dev/seed-contents.s
 
 - 원본 영상은 Blender Studio 작품 페이지에서 받는다 (링크는 `/credits` 화면)
 - seed는 Flyway 마이그레이션이 아니다. 테이블은 api가 뜰 때 Flyway가 만드므로 api를 한 번 띄운 뒤에 넣는다. 다시 넣어도 같은 값으로 덮인다
-- 재생 진단 패널은 `http://localhost:5173/?devtools=1`로 켠 뒤 플레이어에서 `Shift + D` (ui.md "개발자 모드")
+- 재생 진단 패널은 `http://localhost:5180/?devtools=1`로 켠 뒤 플레이어에서 `Shift + D` (ui.md "개발자 모드")
 
 ## 폴더
 

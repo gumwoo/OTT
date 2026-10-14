@@ -24,6 +24,7 @@ const hls = vi.hoisted(() => {
 });
 
 vi.mock('hls.js', () => ({
+  PlaylistLevelType: { MAIN: 'main' },
   default: class {
     static isSupported = () => true;
     static Events = {
@@ -209,7 +210,7 @@ describe('player', () => {
 
   it.each([
     ['NOT_AVAILABLE', '지금은 볼 수 있는 기간이 아닙니다'],
-    ['POLICY_UNAVAILABLE', '재생 정책을 확인하지 못했습니다'],
+    ['POLICY_UNAVAILABLE', '이 작품의 재생 정책이 없어 재생할 수 없습니다'],
   ])('reads the %s reason from the XHR response', async (code, message) => {
     renderApp('/contents/night-train/watch');
     await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
@@ -267,19 +268,49 @@ describe('player', () => {
     expect(before).not.toHaveTextContent('kbps');
     expect(before).not.toHaveTextContent('연동 필요');
 
-    emit('hlsFragBuffered', {});
+    emit('hlsFragBuffered', { frag: { type: 'audio', sn: 1 } });
+    emit('hlsFragBuffered', { frag: { type: 'main', sn: 'initSegment' } });
     emit('hlsFragLoaded', {
       networkDetails: xhrWithHeaders({
         'x-amz-cf-pop': 'ICN57-P1',
         'x-cache': 'Hit from cloudfront',
       }),
     });
-    await user.keyboard('{Shift>}D{/Shift}');
-    await user.keyboard('{Shift>}D{/Shift}');
+    // 패널은 열린 채로 1초마다 다시 읽는다
+    await waitFor(() => expect(before).toHaveTextContent('ICN57-P1'));
+    expect(before).toHaveTextContent('Hit from cloudfront');
+    expect(before).not.toHaveTextContent('kbps');
 
-    const after = await screen.findByRole('region', { name: '재생 진단' });
-    expect(after).toHaveTextContent('500 kbps');
-    expect(after).toHaveTextContent('ICN57-P1');
-    expect(after).toHaveTextContent('Hit from cloudfront');
+    emit('hlsFragBuffered', { frag: { type: 'main', sn: 1 } });
+    await waitFor(() => expect(before).toHaveTextContent('500 kbps'));
+  });
+
+  it.each([
+    ['keeps refreshing the cookie during playback', false, 1],
+    ['stops refreshing the cookie once the edge refuses', true, 0],
+  ])('%s', async (_name, deny, expectedRefreshes) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    let refreshes = 0;
+    server.use(
+      http.post('*/api/playback/:sessionId/refresh', () => {
+        refreshes++;
+        return HttpResponse.json(grant);
+      }),
+    );
+    try {
+      renderApp('/contents/night-train/watch');
+      await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+      if (deny) {
+        emit('hlsError', denied403(xhrWithHeaders({ 'X-Playback-Denied': 'GEO_BLOCKED' })));
+        await screen.findByText('사유 코드 GEO_BLOCKED');
+      }
+
+      // 만료 30분 전 쿠키는 15분 뒤에 갱신한다
+      await act(() => vi.advanceTimersByTimeAsync(16 * 60_000));
+
+      await waitFor(() => expect(refreshes).toBe(expectedRefreshes));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

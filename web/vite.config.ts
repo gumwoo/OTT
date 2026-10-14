@@ -5,6 +5,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // 5173은 다른 프로젝트와 겹치기 쉽다. 다른 포트로 비켜 뜨면 api의 resource-base-url과 어긋난다
+    port: 5180,
+    strictPort: true,
     proxy: {
       '/api': 'http://localhost:8080',
       // '/content'만 쓰면 화면 경로 /contents/...까지 영상 서버로 간다

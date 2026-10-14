@@ -51,7 +51,6 @@ export function Row({ title, items, shape }: Props) {
               <div className="relative overflow-hidden rounded-lg">
                 <Artwork
                   contentId={item.id}
-                  title={item.title}
                   kind={shape === 'poster' ? 'poster' : 'still'}
                   className={`w-full transition-transform duration-300 group-hover:scale-[1.03] ${shape === 'poster' ? 'aspect-[2/3]' : 'aspect-video'}`}
                 />

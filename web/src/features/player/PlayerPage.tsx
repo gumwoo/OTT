@@ -12,7 +12,7 @@ const CONTROLS_HIDE_MS = 3_000;
 const DENIED_MESSAGES: Record<string, string> = {
   GEO_BLOCKED: '현재 계신 국가에서는 볼 수 없는 작품입니다',
   NOT_AVAILABLE: '지금은 볼 수 있는 기간이 아닙니다',
-  POLICY_UNAVAILABLE: '재생 정책을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요',
+  POLICY_UNAVAILABLE: '이 작품의 재생 정책이 없어 재생할 수 없습니다',
 };
 
 // 재생 시작은 화면 진입 한 번에 한 번이라 loader에서 한다. 재검증으로 세션이 또 생기지 않게 막는다
@@ -98,6 +98,7 @@ function useDiagnosticsToggle(): boolean {
   useEffect(() => {
     if (!isDevMode()) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.shiftKey && event.code === 'KeyD') setOpen((value) => !value);
     };
     window.addEventListener('keydown', onKey);

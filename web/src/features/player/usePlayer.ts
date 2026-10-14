@@ -1,4 +1,4 @@
-import Hls from 'hls.js';
+import Hls, { PlaylistLevelType } from 'hls.js';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ApiError } from '../../lib/api/client';
 import { refreshPlayback, sendQoe, type PlaybackGrant, type QoeEvent } from './api';
@@ -96,8 +96,11 @@ function useHls(
           cache: header(data.networkDetails, 'x-cache'),
         };
       });
-      instance.on(Hls.Events.FRAG_BUFFERED, () => {
-        diagnosticsRef.current.bandwidthMeasured = true;
+      // hls.js도 main 이외의 조각과 init 조각은 대역폭 샘플로 쓰지 않는다
+      instance.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
+        if (data.frag.type === PlaylistLevelType.MAIN && data.frag.sn !== 'initSegment') {
+          diagnosticsRef.current.bandwidthMeasured = true;
+        }
       });
       instance.on(Hls.Events.ERROR, (_event, data) => {
         tracker.error(`${data.type}:${data.details}${data.fatal ? ':fatal' : ''}`);
