@@ -101,7 +101,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
-| SP-01 | 포맷은 spring-javaformat. 한글 주석은 한 줄 90자 안으로 쓴다 (길면 `format` 결과를 `checkFormat`이 다시 거부한다. 2026-10-14 두 번 겪음) | 팀 샘플(petclinic), 설계 | `checkFormat` (Gradle `check`) | F, P |
+| SP-01 | 포맷은 spring-javaformat. Gradle 데몬은 `api/gradle.properties`로 UTF-8 고정 (한국어 Windows 기본값 MS949로 읽으면 한글 주석 때문에 `checkFormat`이 실패한다. TS-0001) | 팀 샘플(petclinic), 설계 | `checkFormat` (Gradle `check`) | F, P |
 | SP-02 | `web` 패키지는 Repository에 직접 의존하지 않는다. 상태를 바꾸는 작업은 서비스를 거친다 | 기여자(restbucks), 설계 | ArchUnit | S, P |
 | SP-03 | 기능 패키지 사이에 순환 의존이 없다. 다른 기능의 `web`·`infra`를 참조하지 않는다 | 공식(Boot 구조), 설계 | ArchUnit slices | S, P |
 | SP-04 | 생성자 주입만. 필드 `@Autowired` 금지 | 기여자 전부 | ArchUnit `NO_CLASSES_SHOULD_USE_FIELD_INJECTION` | S, P |
@@ -333,3 +333,14 @@ CI의 AWS 접근은 사용자의 로컬 로그인(SSO 세션)과 무관하다. �
 - Velog에는 공식 글쓰기 API가 없다. 커뮤니티 구현([seongwon030/velog_mcp](https://github.com/seongwon030/velog_mcp) 등, MIT)이 내부 GraphQL을 리버스 엔지니어링해서 쓴다. 이 저장소 README는 "Velog 개발자(@velopert)로부터 운영을 허용한다는 답변을 받았다"고 적고 있으나, 원문 답변은 확인하지 못했다.
 - 그래서 이 자동화는 Velog 쪽 변경에 따라 언제든 멈출 수 있다. 멈춰도 원문 문서와 `docs/blog/`의 글은 저장소에 남는다.
 - 워크플로는 첫 CI 워크플로를 만들 때 함께 만든다. Velog 클라이언트 코드는 직접 작성하고, 공개 게시·수정 외의 기능(삭제 등)은 넣지 않는다.
+
+## 14. 기록 문서 (DOC)
+
+설계 문서(design.md, app-design.md)는 무엇을 만들지 적고, 기록 문서는 만들면서 실제로 일어난 일을 적는다. 포트폴리오에서 "어디까지 직접 했고 무엇을 확인했는가"의 근거가 된다.
+
+| ID | 규칙 | 강제 | 시점 |
+|---|---|---|---|
+| DOC-01 | app-design.md §12 개발 순서 한 단계를 마치면 [impl/TEMPLATE.md](impl/TEMPLATE.md) 형식으로 구현 기록(`docs/impl/NN-*.md`)을 남긴다. 단계의 마지막 PR에 함께 넣는다 | 리뷰 | P |
+| DOC-02 | 원인을 추적해서 고친 문제는 고친 PR에 트러블슈팅 문서(`docs/troubleshooting/TS-NNNN-*.md`, BL-01 형식)를 함께 넣는다. 오타·설정 실수처럼 원인이 바로 보이는 것은 제외 | 리뷰 | P |
+| DOC-03 | 대안을 비교해서 고른, 되돌리기 비싼 결정은 ADR로 쓴다. 한 모듈 안의 작은 결정은 app-design.md에 "결정: 날짜"로 적는다 | 리뷰 | P |
+| DOC-04 | 기록 문서에는 테스트·로그·PR·화면으로 확인한 사실만 쓴다. 나중에 정리하면서 기록이 남아 있지 않은 부분은 "기록 없음"으로 둔다 | 리뷰 | P |

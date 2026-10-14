@@ -112,7 +112,7 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
 - **`server.servlet.context-path`는 쓰지 않는다.** CSRF 쿠키 경로의 기본값이 context path라서, `/api`로 두면 `XSRF-TOKEN`도 `/api`로 가고 화면의 JS가 읽지 못한다. `/api` 접두어는 컨트롤러 매핑과 CloudFront 경로로 붙인다.
 - 세션 쿠키 경로만 `server.servlet.session.cookie.path=/api`로 좁힌다 (`http-only`, `secure`, `same-site=lax`도 같은 속성 그룹).
 - Spring Session은 `spring-boot-starter-session-jdbc` 자동설정을 쓴다. **`@EnableJdbcHttpSession`을 붙이지 않는다.** 붙이면 자동설정이 꺼져 위 쿠키 속성 매핑도 사라진다.
-- 세션 테이블은 Flyway 마이그레이션으로 관리하고 `spring.session.jdbc.initialize-schema=never`로 둔다.
+- 세션 테이블은 Flyway 마이그레이션으로 관리하고 `spring.session.jdbc.initialize-schema=never`로 둔다. 공식 스키마의 `PRINCIPAL_NAME VARCHAR(100)`은 이메일 최대 길이(320)보다 짧아서 넓혀 두었다 (TS-0002).
 
 ### CSRF 흐름
 
@@ -266,7 +266,7 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 - [확인] SDK 2.55.16의 `CookiesForCustomPolicy.hashAlgorithmHeaderValue()`가 `CloudFront-Hash-Algorithm=SHA256`을 돌려준다. 단위 테스트에서 공개키로 서명을 검증해 SHA256withRSA로는 맞고 SHA1withRSA로는 틀린 것을 확인했다 (2026-10-14).
 - 비공개 키는 PKCS#8 PEM(`BEGIN PRIVATE KEY`)만 받는다. `ott.playback.signing.private-key`에 파일 위치를 준다. `local` 프로필은 키 없이 기동 시 임시 키를 만든다 (`ephemeral-key=true`). 운영에서 키가 없으면 기동을 실패시킨다.
 - 최종 확인은 실제 CloudFront에서 쿠키 4개로 manifest와 segment가 모두 열리는지 보는 통합 테스트다.
-- 개인키는 AWS Secrets Manager에 두고 시작 시 읽는다. 로컬은 개발용 키 파일.
+- 개인키는 AWS Secrets Manager에 두고 시작 시 읽는다. 로컬은 위의 임시 키를 쓴다.
 - 서명 로직은 단위 테스트로 검증한다: 정책 JSON 형태, Resource가 버전 경로로 제한되는지, 만료 시각 계산.
 
 ## 8. 변환 Job (`transcoder/`)
@@ -336,13 +336,13 @@ docker compose:
   postgres         PostgreSQL 17, localhost:5434
   content-server   nginx, .local/content를 localhost:8081/content로 서빙
 api:  ./gradlew bootRun --args='--spring.profiles.active=local'
-web:  npm run dev   (Vite 프록시: /api → api, /content → content-server)
+web:  npm run dev   (5180. Vite 프록시: /api → api(8085), ^/content/ → content-server(8081))
 ```
 
 - Vite 프록시는 HTTP 서버만 대상으로 할 수 있다. 디렉터리를 직접 가리킬 수 없으므로 compose에 정적 파일 서버를 둔다.
 - postgres를 5432가 아니라 5434에 연다. 개발 PC에 직접 설치한 PostgreSQL이 5432를 쓰고 있으면 API가 그쪽에 붙어 인증 오류가 난다 (0단계에서 실제로 겪음).
 - 통합 테스트는 compose DB를 쓰지 않는다. 테스트를 돌릴 때 Testcontainers가 `postgres:17-alpine`을 따로 띄운다.
-- `local` 프로필: 개발용 RSA 키, 개발용 Job 토큰, 로컬 source·content 디렉터리.
+- `local` 프로필: 포트 8085, 기동마다 만드는 임시 서명 키, 개발용 Job 토큰, 로컬 source·content 디렉터리.
 - 로컬에서는 CloudFront가 없으므로 Signed Cookie는 발급만 되고 검증되지 않는다. 쿠키 검증과 국가 정책은 AWS 실험 단계에서 확인한다.
 
 ### 저장소 인터페이스
@@ -416,7 +416,7 @@ AWS 없이 할 수 있는 것부터 한다.
 0. 모듈별 골격 + 품질 도구 연결 (CONVENTIONS §2 버전 조합을 최소 프로젝트로 빌드해서 확인, 의도적 위반 코드로 검사가 실제로 막는지 확인)
 1. `api` 뼈대: 스키마, 가입·로그인·세션, 구독
 2. 카탈로그, 재생 API, Signed Cookie 서명
-3. `web`: 화면 4개, 플레이어 이전, QoE 보고
+3. `web`: 화면(로그인·카탈로그·상세·플레이어·계정·출처), 플레이어 이전, QoE 보고
 4. `transcoder`: 로컬 모드로 변환 → 검증 → 게시 흐름
 5. 운영자 CLI
 6. kind에서 TokenReview·RBAC·Job 실패 시나리오 확인
