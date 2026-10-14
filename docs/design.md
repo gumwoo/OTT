@@ -130,7 +130,7 @@ CloudFront는 cache behavior를 **나열된 순서대로 비교해 첫 번째로
 | 트랜스코딩 산출물 | S3 content 버킷의 불변 버전 경로 | CloudFront |
 | 국가별 배포 계약 | **Git `policies/*.yaml`** | 파이프라인 → KVS → Edge |
 
-- API는 국가 계약을 판단하지 않는다. Cookie는 `min(기본 TTL, 구독 만료)`로 발급하고, 국가·계약 기간은 Edge가 매 요청 집행한다.
+- API는 국가 계약을 판단하지 않는다. Cookie는 기본 TTL로 발급하되 PREMIUM 콘텐츠는 구독 만료를 넘지 않게 자르고 (app-design.md §6), 국가·계약 기간은 Edge가 매 요청 집행한다.
 - 따라서 "Cookie는 발급됐는데 Edge가 403"은 **설계상 예상된 결과**다. 클라이언트는 사유 코드로 "이 국가에서 볼 수 없음" UX를 보여준다.
 - 카탈로그에서 미리 숨기고 싶다면, API는 같은 Git 빌드 산출물을 **읽기 전용**으로 소비할 수 있다. 원본은 여전히 Git 하나다. (1차 범위 밖)
 
