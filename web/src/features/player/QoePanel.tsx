@@ -1,3 +1,4 @@
+import type Hls from 'hls.js';
 import { useEffect, useState, type RefObject } from 'react';
 import type { EdgeHeaders, PlayerDiagnostics } from './usePlayer';
 
@@ -87,13 +88,20 @@ function collect(
     { label: '버전 경로', value: manifestUrl.replace(/master\.m3u8$/, '') },
     // 세션 ID 전체는 QoE 보고를 위조하는 데 쓸 수 있어 앞부분만 보인다
     { label: '세션', value: `${sessionId.slice(0, 8)}…` },
-    edgeRow('CDN POP', edge, edge?.pop),
-    edgeRow('캐시', edge, edge?.cache),
+    edgeRow('CDN POP', hls, edge, edge?.pop),
+    edgeRow('캐시', hls, edge, edge?.cache),
   ];
 }
 
 // 세그먼트를 받기 전은 측정 전이고, 받았는데 헤더가 없으면 CloudFront를 거치지 않은 것이다
-function edgeRow(label: string, edge: EdgeHeaders | null, value: string | null | undefined): Row {
+function edgeRow(
+  label: string,
+  hls: Hls | null,
+  edge: EdgeHeaders | null,
+  value: string | null | undefined,
+): Row {
+  // 브라우저 자체 HLS(Safari)는 응답 헤더를 읽을 수 없다
+  if (!hls) return { label, value: '측정 불가', pending: true };
   if (!edge) return { label, value: '-' };
   return value ? { label, value } : { label, value: NEEDS_INTEGRATION, pending: true };
 }

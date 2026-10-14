@@ -11,7 +11,7 @@ export function RootLayout() {
   return (
     <div className="flex min-h-dvh flex-col">
       <Header />
-      <div className="flex-1">
+      <div className="flex flex-1 flex-col">
         <Outlet />
       </div>
       <Footer />

@@ -8,17 +8,24 @@ type Props = {
   item: CatalogItem & { description?: string };
   playable: boolean;
   heading: 'h1' | 'h2';
+  // 홈은 3줄까지, 상세는 전체
+  clampDescription?: boolean;
   children?: ReactNode;
 };
 
 // 화면 폭 16:9 스틸컷 위에 왼쪽 아래로 제목을 둔다. 수치는 Apple TV 웹 실측 기준 (docs/ui.md)
 // 좁은 화면에서는 이미지 높이가 글자보다 낮아서 글자를 이미지 아래로 내린다
-export function Hero({ item, playable, heading: Heading, children }: Props) {
+export function Hero({
+  item,
+  playable,
+  heading: Heading,
+  clampDescription = true,
+  children,
+}: Props) {
   return (
     <section className="relative">
       <Artwork
         contentId={item.id}
-        title={item.title}
         kind="still"
         priority
         className="aspect-video max-h-[85vh] w-full"
@@ -32,7 +39,9 @@ export function Hero({ item, playable, heading: Heading, children }: Props) {
           {item.requiredPlan}
         </p>
         {item.description && (
-          <p className="text-text mt-3 line-clamp-3 max-w-[26rem] text-[15px] leading-relaxed">
+          <p
+            className={`text-text mt-3 max-w-[26rem] text-[15px] leading-relaxed ${clampDescription ? 'line-clamp-3' : ''}`}
+          >
             {item.description}
           </p>
         )}

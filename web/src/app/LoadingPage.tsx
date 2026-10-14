@@ -2,11 +2,10 @@
 export function LoadingPage() {
   return (
     <div aria-busy="true" aria-label="불러오는 중">
-      <div className="bg-bg h-14" />
-      <div className="bg-surface aspect-video max-h-[70vh] w-full" />
-      <div className="mt-10 flex gap-2 px-6 md:px-12">
+      <div className="bg-surface aspect-video max-h-[85vh] w-full" />
+      <div className="mt-12 flex gap-4 overflow-hidden px-6 md:gap-5 md:px-10">
         {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className="bg-surface aspect-[2/3] w-32 shrink-0 rounded-sm md:w-40" />
+          <div key={i} className="bg-surface aspect-[2/3] w-36 shrink-0 rounded-lg md:w-44" />
         ))}
       </div>
     </div>

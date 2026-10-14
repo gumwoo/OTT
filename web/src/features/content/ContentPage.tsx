@@ -11,7 +11,7 @@ export function ContentPage() {
 
   return (
     <main>
-      <Hero item={content} playable={content.playable} heading="h1">
+      <Hero item={content} playable={content.playable} heading="h1" clampDescription={false}>
         {!content.playable && (
           <p className="text-text-muted text-sm">PREMIUM 구독이 필요한 작품입니다</p>
         )}
