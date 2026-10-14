@@ -29,7 +29,7 @@
 | 3 | TypeScript 7은 typescript-eslint 미지원, jsx-a11y는 ESLint 10 미지원 | **확정** (조사일 기준) | TS `~6.0`, ESLint 9 고정 |
 | 4 | `context-path=/api`면 XSRF 쿠키 path가 `/api`가 되어 SPA가 읽지 못함 | **확정** (소스) | context-path 금지 |
 | 5 | 필터 단계 401·403·CSRF 실패는 `@RestControllerAdvice`를 거치지 않음, 기본 미인증 응답은 403 | **확정** (소스) | entry point·access denied handler에서 같은 형식 |
-| 6 | 수동 JSON 로그인의 세션 고정 방어·CSRF 재발급 | **가설** (문서에 없음) | 통합 테스트로 확인 |
+| 6 | 수동 JSON 로그인의 세션 고정 방어·CSRF 재발급 | **확정** (2026-10-14 통합 테스트) | 프레임워크가 해 주지 않는다. `LoginSession`에서 직접 호출 |
 | 7 | 응답 유실 후 재시도 시 자기 객체로 412 오탐 | **가설** | 재현 테스트 후 처리 규칙 결정 (design.md §4) |
 | 8 | `upload_file`은 `IfNoneMatch` 미지원 | **확정** (소스, 실행 미검증) | `put_object` 직접 사용 |
 | 9 | PID 1 Python은 SIGTERM 핸들러가 없으면 신호 무시 | **확정** | 핸들러 필수, 셸 래퍼 금지 |
