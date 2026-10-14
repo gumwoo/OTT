@@ -13,6 +13,7 @@
 - 주석은 짧게, 코드만 봐서는 알 수 없는 이유만 쓴다. 파일 머리 설명 블록, 해설 말투, 구분선 주석 금지 (GEN-05).
 - 기존 구조와 패키지 규칙을 따른다. 규칙을 바꿔야 하면 CONVENTIONS부터 고친다.
 - 커밋·PR에 AI 공동작업자나 생성 도구 표기를 넣지 않는다 (GEN-04).
+- 개발 단계를 마치면 `docs/impl` 구현 기록을, 원인을 추적해서 고친 문제는 `docs/troubleshooting` 문서를 같은 PR에 넣는다 (DOC-01·02).
 - 커밋 제목은 `<type>(<scope>): <요약>`. scope는 api·web·transcoder·infra·deploy.
 
 ## 모듈별 검사
