@@ -19,7 +19,20 @@ function csrfToken(): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export function jsonBody(method: 'POST' | 'PUT', body: unknown): RequestInit {
+  return { method, body: JSON.stringify(body) };
+}
+
+// 로그인·로그아웃 뒤에는 서버가 토큰 쿠키를 지우므로 다시 받는다 (app-design.md §5)
+export async function refreshCsrf(): Promise<void> {
+  await apiFetch<void>('/api/csrf');
+}
+
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+  retried = false,
+): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
@@ -31,10 +44,20 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set('X-XSRF-TOKEN', token);
   }
 
-  const res = await fetch(path, { ...init, method, headers, credentials: 'same-origin' });
+  const res = await fetch(new URL(path, window.location.origin), {
+    ...init,
+    method,
+    headers,
+    credentials: 'same-origin',
+  });
   if (!res.ok) {
     const problem = (await res.json().catch(() => ({}))) as { code?: string; detail?: string };
-    throw new ApiError(res.status, problem.code ?? 'UNKNOWN', problem.detail);
+    const error = new ApiError(res.status, problem.code ?? 'UNKNOWN', problem.detail);
+    if (error.code === 'CSRF_INVALID' && UNSAFE_METHODS.has(method) && !retried) {
+      await refreshCsrf();
+      return apiFetch<T>(path, init, true);
+    }
+    throw error;
   }
   if (res.status === 204) {
     return undefined as T;

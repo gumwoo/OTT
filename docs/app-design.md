@@ -304,13 +304,18 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 |---|---|
 | `/login`, `/signup` | 로그인, 가입 |
 | `/` | 카탈로그 |
-| `/contents/:id` | 상세 + 재생 |
+| `/contents/:id` | 상세 |
+| `/contents/:id/watch` | 재생. 들어올 때 loader가 재생 시작 API를 한 번 부르고, 재검증으로 세션이 또 생기지 않게 막는다 |
 | `/account` | 내 구독 |
 
 - 폴더 구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼, `ApiError`, CSRF), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`.
 - 서버 상태는 TanStack Query로만 관리한다. 전역 상태 라이브러리는 두지 않는다. 모든 query는 `queryOptions()` + feature별 key factory로 정의한다.
 - **React Router 8 Data mode** (`createBrowserRouter`, `react-router/dom`의 `RouterProvider`). v8에서 `react-router-dom` 패키지가 없어졌다. 인증이 필요한 화면은 레이아웃 라우트의 middleware에서 `/api/me`를 확인하고 없으면 `/login`으로 보낸다.
-- 플레이어는 기존 `player/qoe.js` 로직을 훅(`usePlayback`, `useQoe`)으로 옮긴다. 재생 시작 → refresh 타이머 → 종료 시 QoE 보고.
+- 플레이어는 기존 `player/qoe.js` 로직을 `features/player`(`qoe.ts`, `usePlayer.ts`)로 옮겼다. 재생 시작 → refresh 타이머 → 종료 시 QoE 보고.
+  - QoE는 30초마다 `PERIODIC`, 탭이 가려지면 `PERIODIC`(keepalive), 화면을 떠나면 `FINAL`(keepalive)을 보낸다.
+  - FINAL은 hls.js를 정리하기 전에 보낸다. `hls.destroy()`가 미디어를 떼어 내면 재생 위치가 0이 된다 (로컬 확인에서 발견).
+  - 개발 모드(StrictMode)는 화면을 한 번 마운트했다 해제하므로 빈 FINAL이 하나 더 생긴다. 운영 빌드에는 없다.
+  - hls.js는 크기가 커서(약 500KB) 재생 화면을 lazy 라우트로 분리했다.
   - hls.js 인스턴스는 effect 안에서 만들고 cleanup에서 `destroy()`한다. 개발 모드(StrictMode)에서 두 번 생성·파괴되는 것이 정상이며, ref로 막지 않는다.
   - **QoE 전송은 `fetch(..., { keepalive: true })`**를 쓰고, 화면을 떠날 때(`visibilitychange` hidden) 남은 이벤트를 보낸다. `navigator.sendBeacon`은 헤더를 붙일 수 없어서 CSRF 헤더가 필요한 `/api/qoe`로 보낼 수 없다 [확인]. keepalive 요청은 64KiB 제한이 있으므로 배치 크기를 그 안으로 유지한다.
 - API 클라이언트가 CSRF 토큰을 헤더에 붙이고, 오류는 ProblemDetail의 `code`로 처리한다. 앱 시작 시와 로그인·로그아웃 직후 `GET /api/csrf`를 호출한다 (§5 CSRF 흐름).
