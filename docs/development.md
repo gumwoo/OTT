@@ -32,6 +32,7 @@ docker compose exec -T postgres psql -U ott -d ott < scripts/dev/seed-contents.s
 ```
 
 - 원본 영상은 Blender Studio 작품 페이지에서 받는다 (링크는 `/credits` 화면)
+- seed는 콘텐츠의 v1을 공개 상태로 넣고 버전 카운터도 1로 맞춘다. 그래서 첫 변환 요청은 v2를 받는다. seed로 넣은 v1에는 변환 작업 기록이 없어서 롤백 대상으로 고를 수 없다
 - seed는 Flyway 마이그레이션이 아니다. 테이블은 api가 뜰 때 Flyway가 만드므로 api를 한 번 띄운 뒤에 넣는다. 다시 넣어도 같은 값으로 덮인다
 - 재생 진단 패널은 `http://localhost:5180/?devtools=1`로 켠 뒤 플레이어에서 `Shift + D` (ui.md "개발자 모드")
 
