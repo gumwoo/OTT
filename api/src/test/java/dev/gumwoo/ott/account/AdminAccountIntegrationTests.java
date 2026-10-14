@@ -57,12 +57,11 @@ class AdminAccountIntegrationTests extends IntegrationTest {
 		admin.post("/api/auth/login", credentials(adminEmail, PASSWORD));
 		Browser user = loggedIn(uniqueEmail());
 
-		Browser.Response asUser = user.get("/api/admin/contents");
+		Browser.Response asUser = user.get("/api/admin/nothing");
 
 		assertThat(asUser.status()).isEqualTo(403);
 		assertThat(asUser.json().get("code").asString()).isEqualTo("FORBIDDEN");
-		// 아직 admin 엔드포인트가 없으므로 인가를 통과하면 404다
-		assertThat(admin.get("/api/admin/contents").status()).isEqualTo(404);
+		assertThat(admin.get("/api/admin/nothing").status()).isEqualTo(404);
 	}
 
 	private static void await(CyclicBarrier barrier) {

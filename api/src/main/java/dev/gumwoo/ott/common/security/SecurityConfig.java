@@ -4,16 +4,19 @@ import java.util.List;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
 import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
 import org.springframework.security.web.authentication.session.CompositeSessionAuthenticationStrategy;
@@ -27,6 +30,24 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {
+
+	// Job은 쿠키 없이 Bearer 토큰만 쓴다. 세션 쿠키로는 /internal/*에 들어올 수 없다 (design.md §4)
+	@Bean
+	@Order(1)
+	SecurityFilterChain internalFilterChain(HttpSecurity http, JobTokenVerifier verifier,
+			SecurityErrorHandler errorHandler) {
+		http.securityMatcher("/internal/**")
+			.csrf((csrf) -> csrf.disable())
+			.sessionManagement((session) -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+			.securityContext(
+					(context) -> context.securityContextRepository(new RequestAttributeSecurityContextRepository()))
+			.requestCache((cache) -> cache.disable())
+			.addFilterBefore(new JobTokenAuthenticationFilter(verifier), AnonymousAuthenticationFilter.class)
+			.authorizeHttpRequests((authorize) -> authorize.anyRequest().hasRole("TRANSCODER"))
+			.exceptionHandling((exceptions) -> exceptions.authenticationEntryPoint(errorHandler)
+				.accessDeniedHandler(errorHandler));
+		return http.build();
+	}
 
 	@Bean
 	SecurityFilterChain apiFilterChain(HttpSecurity http, CookieCsrfTokenRepository csrfTokenRepository,

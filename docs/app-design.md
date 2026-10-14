@@ -215,6 +215,12 @@ Cookie 갱신(`POST /api/playback/{sessionId}/refresh`):
 - Kubernetes Job 생성은 운영자 CLI(`scripts/`)가 운영자 본인의 kubeconfig로 한다. 순서: admin API로 작업 등록 → 받은 jobId·버전으로 Job 템플릿 렌더링 → `kubectl create`.
 - 이렇게 나누면 API가 탈취돼도 클러스터에 임의의 워크로드를 띄울 수 없다.
 
+구현에서 정한 것 (결정: 2026-10-14):
+
+- 콘텐츠 ID는 40자까지, 소문자·숫자·`-`(양 끝은 영숫자). Job 이름 `transcode-{id}-v{n}`이 Kubernetes 이름 제한 63자 안에 들어야 한다. 같은 ID로 다시 등록하면 409 `CONTENT_EXISTS`(기존 행을 덮지 않는다).
+- 변환 요청 본문은 `sourceKey`, `sourceHash`(SHA-256 소문자 hex), `profileVersion`. 응답은 작업 전체(`id`, `version`, `publishEpoch`, `k8sJobName` 등)다.
+- 롤백 대상이 아니면 409 `ROLLBACK_NOT_ALLOWED`.
+
 ### Job 전용 (`/internal/*`, CloudFront로 노출 안 됨)
 
 | 메서드 | 경로 | 설명 |
@@ -231,12 +237,22 @@ publish 응답:
 | 이미 `PUBLISHED` (응답 유실 후 재요청) | 200, 같은 결과. 포인터를 다시 바꾸지 않는다 |
 | 게시 세대가 다름 (작업 등록 뒤 롤백이 있었음) | 200 `{ status: "PUBLISHED_SUPERSEDED", reason: "STALE_EPOCH", currentVersion: m }` |
 | 같거나 더 높은 버전이 공개된 적 있음 (`max_published_version` ≥ 요청 버전) | 200 `{ status: "PUBLISHED_SUPERSEDED", reason: "OLDER_VERSION", currentVersion: m }` |
-| `UPLOADED`가 아님, 식별자 불일치, 산출물 누락 | 409 + 오류 코드 |
+| `UPLOADED`가 아님, 식별자 불일치, 산출물 누락 | 409 + 오류 코드 (`INVALID_JOB_STATE`·`JOB_FAILED`, `JOB_MISMATCH`, `ARTIFACTS_MISSING`) |
 
 - heartbeat가 409를 받으면 Job이 스스로 멈추도록 해서, `LOST`로 확정된 뒤에도 계속 업로드하는 경우를 줄인다. 확실한 종료는 `activeDeadlineSeconds`가 보장한다.
 
+- 구현에서 정한 것 (결정: 2026-10-14)
+  - 상태 보고는 한 단계씩만 나아간다(`REQUESTED → RUNNING → VALIDATED → UPLOADED`, 어디서든 `FAILED`). 건너뛰면 409 `INVALID_JOB_STATE`. 지금 상태와 같은 보고는 응답 유실 뒤 재전송으로 보고 204로 받는다.
+  - `FAILED` 보고에는 `failureCode`가 필요하다. `LOST`·`NOT_STARTED`는 운영 CronJob만 확정하므로 Job이 보내면 400.
+  - 이미 `FAILED`인 작업의 보고·heartbeat·publish는 409 `JOB_FAILED`. Job은 이 코드를 받으면 즉시 멈춘다.
+  - heartbeat는 `RUNNING`·`VALIDATED`·`UPLOADED`에서만 `heartbeat_at`을 갱신한다. `REQUESTED`면 409 `INVALID_JOB_STATE`, 이미 게시된 작업이면 갱신 없이 204(게시 직후까지 도는 heartbeat 스레드가 실패로 끝나지 않게).
+  - 산출물 확인은 잠그지 않고 읽은 상태가 `UPLOADED`일 때 하고, 트랜잭션에서 잠근 뒤 다시 본다. 확인할 때는 `UPLOADED`가 아니었는데 잠근 뒤에 `UPLOADED`면 확인 없이 게시하지 않고 409 `INVALID_JOB_STATE`로 돌려보낸다 (Job이 다시 요청).
+  - publish 응답은 `{ status, reason, version, currentVersion }`. `currentVersion`은 응답 시점의 공개 버전이라 재요청이면 그사이 바뀌었을 수 있다.
+  - 산출물 확인은 master → variant → segment 존재와 `#EXT-X-ENDLIST`까지 본다. 길이 검사는 Job의 `validate_hls.py`가 한다. URI는 같은 디렉터리의 파일 이름만 받는다(`../` 등은 문제로 보고).
+  - 로컬 구현은 `ott.content.local-root`(local 프로필 `../.local/content`)를 읽는다. 설정이 없으면 기동을 실패시킨다. S3 구현은 AWS 단계에서 붙인다.
 - 인증은 ServiceAccount 토큰 + TokenReview. 인증 로직은 인터페이스로 두고, `local` 프로필에서만 고정 개발용 토큰 구현으로 바꾼다.
-- **운영에서 개발용 구현이 켜지지 않게** 막는다. 개발용 구현은 `local` 프로필에서만 빈으로 등록되고, 운영 프로필에서 개발용 토큰 설정이 감지되면 기동을 실패시킨다.
+- **운영에서 개발용 구현이 켜지지 않게** 막는다. 개발용 토큰은 `local`·`test` 프로필에서만 쓸 수 있고, 그 밖의 프로필에서 개발용 토큰 설정이 감지되면 기동을 실패시킨다.
+  - 구현: `/internal/**`은 별도 `SecurityFilterChain`(STATELESS, CSRF 없음)이고 `Authorization: Bearer`만 본다. 세션 쿠키로는 들어올 수 없다. 개발용 토큰은 `ott.internal.dev-token`이고 `local`·`test` 프로필에서만 허용한다. 검증기가 없으면(TokenReview 구현 전) `/internal/*`은 모두 401이다.
 
 ### 오류 응답 형식 (결정: 2026-10-13)
 

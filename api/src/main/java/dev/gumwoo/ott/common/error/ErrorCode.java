@@ -29,6 +29,18 @@ public enum ErrorCode {
 
 	EMAIL_TAKEN(HttpStatus.CONFLICT, "이미 가입된 이메일입니다"),
 
+	CONTENT_EXISTS(HttpStatus.CONFLICT, "이미 등록된 콘텐츠입니다"),
+
+	JOB_FAILED(HttpStatus.CONFLICT, "이미 실패로 확정된 작업입니다"),
+
+	INVALID_JOB_STATE(HttpStatus.CONFLICT, "지금 작업 상태에서는 할 수 없는 요청입니다"),
+
+	JOB_MISMATCH(HttpStatus.CONFLICT, "등록된 작업과 일치하지 않습니다"),
+
+	ARTIFACTS_MISSING(HttpStatus.CONFLICT, "산출물이 완전하지 않습니다"),
+
+	ROLLBACK_NOT_ALLOWED(HttpStatus.CONFLICT, "공개된 적 없는 버전으로는 되돌릴 수 없습니다"),
+
 	UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 요청 형식입니다"),
 
 	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
