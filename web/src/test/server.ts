@@ -22,4 +22,7 @@ export const server = setupServer(
   http.get('*/api/csrf', () => new HttpResponse(null, { status: 204 })),
   http.get('*/api/me', () => HttpResponse.json(basicAccount)),
   http.get('*/api/contents', () => HttpResponse.json(catalog)),
+  http.get('*/api/contents/night-train', () =>
+    HttpResponse.json({ ...catalog[0], description: '마지막 열차가 떠난 뒤', playable: true }),
+  ),
 );

@@ -15,6 +15,13 @@ beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' });
   // jsdom에는 미디어 재생이 없다
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
 });
 
 afterEach(() => {
@@ -22,6 +29,7 @@ afterEach(() => {
   server.resetHandlers();
   queryClient.clear();
   vi.mocked(reloadAt).mockClear();
+  localStorage.clear();
 });
 
 afterAll(() => server.close());

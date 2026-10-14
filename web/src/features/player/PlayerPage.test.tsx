@@ -1,4 +1,5 @@
 import { act, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { problem, server } from '../../test/server';
@@ -25,9 +26,17 @@ const hls = vi.hoisted(() => {
 vi.mock('hls.js', () => ({
   default: class {
     static isSupported = () => true;
-    static Events = { LEVEL_SWITCHED: 'hlsLevelSwitched', ERROR: 'hlsError' };
+    static Events = {
+      LEVEL_SWITCHED: 'hlsLevelSwitched',
+      FRAG_LOADED: 'hlsFragLoaded',
+      FRAG_BUFFERED: 'hlsFragBuffered',
+      ERROR: 'hlsError',
+    };
     static ErrorTypes = { MEDIA_ERROR: 'mediaError', NETWORK_ERROR: 'networkError' };
     levels = [{ height: 360 }, { height: 1080 }];
+    currentLevel = -1;
+    // hls.js는 샘플이 없을 때 설정 기본값(500 kbps)을 돌려준다
+    bandwidthEstimate = 500_000;
     on = (event: string, handler: Handler) => hls.handlers.set(event, handler);
     loadSource = hls.loadSource;
     attachMedia = hls.attachMedia;
@@ -65,6 +74,26 @@ afterEach(() => {
 
 function emit(event: string, data: unknown) {
   act(() => hls.handlers.get(event)?.(event, data));
+}
+
+// hls.js 기본 로더(XhrLoader)는 networkDetails로 XMLHttpRequest를 넘긴다
+function xhrWithHeaders(headers: Record<string, string>): XMLHttpRequest {
+  const xhr = Object.create(XMLHttpRequest.prototype) as XMLHttpRequest;
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  Object.defineProperty(xhr, 'getResponseHeader', {
+    value: (name: string) => lower[name.toLowerCase()] ?? null,
+  });
+  return xhr;
+}
+
+function denied403(networkDetails: unknown) {
+  return {
+    type: 'networkError',
+    details: 'fragLoadError',
+    fatal: true,
+    response: { code: 403 },
+    networkDetails,
+  };
 }
 
 function qoeKeepaliveFlags(): unknown[] {
@@ -141,5 +170,116 @@ describe('player', () => {
 
     expect(await screen.findByText('PREMIUM 구독이 필요합니다')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '구독 바꾸기' })).toHaveAttribute('href', '/account');
+  });
+
+  it('shows the edge decision when the region is blocked', async () => {
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    emit('hlsError', {
+      type: 'networkError',
+      details: 'manifestLoadError',
+      fatal: true,
+      response: { code: 403 },
+      networkDetails: new Response(null, {
+        status: 403,
+        headers: { 'X-Playback-Denied': 'GEO_BLOCKED' },
+      }),
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('현재 계신 국가에서는 볼 수 없는 작품입니다');
+    expect(alert).toHaveTextContent('사유 코드 GEO_BLOCKED');
+  });
+
+  it('treats a 403 without a reason as a load failure, not a region block', async () => {
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    emit('hlsError', {
+      type: 'networkError',
+      details: 'manifestLoadError',
+      fatal: true,
+      response: { code: 403 },
+      networkDetails: new Response(null, { status: 403 }),
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('영상을 불러오지 못했습니다');
+  });
+
+  it.each([
+    ['NOT_AVAILABLE', '지금은 볼 수 있는 기간이 아닙니다'],
+    ['POLICY_UNAVAILABLE', '재생 정책을 확인하지 못했습니다'],
+  ])('reads the %s reason from the XHR response', async (code, message) => {
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    emit('hlsError', denied403(xhrWithHeaders({ 'X-Playback-Denied': code })));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(message);
+    expect(alert).toHaveTextContent(`사유 코드 ${code}`);
+  });
+
+  it('does not trust an unknown reason value', async () => {
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    emit('hlsError', denied403(xhrWithHeaders({ 'X-Playback-Denied': '<b>ALLOWED</b>' })));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('영상을 불러오지 못했습니다');
+    expect(alert).not.toHaveTextContent('ALLOWED');
+  });
+
+  it('keeps the diagnostics panel away from regular viewers', async () => {
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    await userEvent.setup().keyboard('{Shift>}D{/Shift}');
+
+    expect(screen.queryByRole('region', { name: '재생 진단' })).not.toBeInTheDocument();
+  });
+
+  it('opens the diagnostics panel in developer mode without exposing the full session', async () => {
+    localStorage.setItem('stillcut.devtools', '1');
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+
+    emit('hlsFragLoaded', { networkDetails: xhrWithHeaders({}) });
+    await userEvent.setup().keyboard('{Shift>}D{/Shift}');
+
+    const panel = await screen.findByRole('region', { name: '재생 진단' });
+    expect(panel).toHaveTextContent('6f1c1a9e…');
+    expect(panel).not.toHaveTextContent(grant.sessionId);
+    expect(panel).toHaveTextContent('연동 필요');
+    expect(panel).toHaveTextContent('/content/night-train/v3/');
+  });
+
+  it('shows only measured values in the diagnostics panel', async () => {
+    localStorage.setItem('stillcut.devtools', '1');
+    renderApp('/contents/night-train/watch');
+    await waitFor(() => expect(hls.loadSource).toHaveBeenCalled());
+    const user = userEvent.setup();
+
+    await user.keyboard('{Shift>}D{/Shift}');
+    const before = await screen.findByRole('region', { name: '재생 진단' });
+    expect(before).not.toHaveTextContent('kbps');
+    expect(before).not.toHaveTextContent('연동 필요');
+
+    emit('hlsFragBuffered', {});
+    emit('hlsFragLoaded', {
+      networkDetails: xhrWithHeaders({
+        'x-amz-cf-pop': 'ICN57-P1',
+        'x-cache': 'Hit from cloudfront',
+      }),
+    });
+    await user.keyboard('{Shift>}D{/Shift}');
+    await user.keyboard('{Shift>}D{/Shift}');
+
+    const after = await screen.findByRole('region', { name: '재생 진단' });
+    expect(after).toHaveTextContent('500 kbps');
+    expect(after).toHaveTextContent('ICN57-P1');
+    expect(after).toHaveTextContent('Hit from cloudfront');
   });
 });

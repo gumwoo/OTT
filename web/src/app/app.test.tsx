@@ -40,7 +40,8 @@ describe('catalog', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '밤기차' })).toBeInTheDocument();
     const premiumRow = screen.getByRole('region', { name: 'PREMIUM 작품' });
     expect(within(premiumRow).getByText('항구')).toBeInTheDocument();
-    expect(within(premiumRow).getByText('PREMIUM')).toBeInTheDocument();
+    expect(within(premiumRow).getByText(/PREMIUM$/)).toBeInTheDocument();
+    expect(await screen.findByText('마지막 열차가 떠난 뒤')).toBeInTheDocument();
   });
 
   it('says so when nothing is published', async () => {
@@ -82,6 +83,19 @@ describe('content detail', () => {
     renderApp('/contents/missing');
 
     expect(await screen.findByText('찾을 수 없습니다')).toBeInTheDocument();
+  });
+});
+
+describe('credits', () => {
+  it('lists the source and license of every title', async () => {
+    renderApp('/credits');
+
+    expect(await screen.findByRole('heading', { name: '작품 출처' })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: '원본' })).toHaveLength(4);
+    expect(screen.getByRole('link', { name: 'CC BY 2.5' })).toHaveAttribute(
+      'href',
+      'https://creativecommons.org/licenses/by/2.5/',
+    );
   });
 });
 

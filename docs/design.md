@@ -499,7 +499,7 @@ value: {"rev":14,"rights":{"KR":[notBefore,notAfter],"ID":[notBefore,notAfter]}}
 
 - **Fail-closed는 "403 반환"이 아니라 "권한이 확인되지 않으면 콘텐츠를 주지 않는다"는 뜻**이다. 503도 fail-closed다.
 - Function 미처리 예외는 503이 된다. [확인 필요]
-- 사유 코드는 커스텀 헤더로 내려주고, 웹 플레이어에서 읽으려면 `Access-Control-Expose-Headers`에 등록한다. 내부 규칙은 노출하지 않는다.
+- 사유 코드는 커스텀 헤더 `X-Playback-Denied`로 내려주고 (2026-10-14 웹 플레이어 구현에서 이름 확정), 앱과 영상이 같은 도메인이라(ADR-0008 A안) 웹 플레이어가 그대로 읽는다. 출처를 나누면 `Access-Control-Expose-Headers`에 등록해야 한다. 값은 위 표의 코드 하나뿐이고 내부 규칙은 노출하지 않는다.
 - "키 없음"과 "읽기 실패"를 `kvs.get()`만으로 구분할 수 있는지, `exists()`가 필요한지는 통합 테스트로 결정한다. [확인 필요]
 
 ---
