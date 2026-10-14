@@ -28,5 +28,5 @@
 ## 로컬 실행
 
 - `docker compose up -d` → postgres(5434), content-server(8081)
-- api: `./gradlew bootRun --args='--spring.profiles.active=local'`
-- web: `npm run dev` (/api → 8080, /content → 8081 프록시)
+- api: `./gradlew bootRun --args='--spring.profiles.active=local'` → 8085
+- web: `npm run dev` → 5180 (/api → 8085, /content → 8081 프록시)

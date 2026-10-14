@@ -6,7 +6,7 @@ JDK 17, Node 24, Docker, uv, ffmpeg가 필요하다.
 
 ```bash
 docker compose up -d                 # postgres(5434), content-server(8081)
-cd api && ./gradlew bootRun --args='--spring.profiles.active=local'
+cd api && ./gradlew bootRun --args='--spring.profiles.active=local'   # 8085
 cd web && npm ci && npm run dev     # http://localhost:5180
 ```
 
