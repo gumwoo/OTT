@@ -30,8 +30,8 @@ class QoeController {
 		return ResponseEntity.noContent().build();
 	}
 
-	// keepalive 요청 본문 64KiB 제한 안에 들어오게 개수를 묶는다 (app-design.md §9)
-	record Batch(@NotEmpty @Size(max = 50) List<@Valid QoeReport> events) {
+	// 이벤트 하나가 최대 약 4.5KB라 keepalive 본문(64KiB) 안에 들게 10개까지
+	record Batch(@NotEmpty @Size(max = 10) List<@Valid QoeReport> events) {
 	}
 
 }

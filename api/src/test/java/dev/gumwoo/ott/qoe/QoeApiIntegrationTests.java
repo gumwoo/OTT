@@ -1,11 +1,16 @@
 package dev.gumwoo.ott.qoe;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import dev.gumwoo.ott.support.Browser;
 import dev.gumwoo.ott.support.Browser.Response;
 import dev.gumwoo.ott.support.IntegrationTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -76,6 +81,57 @@ class QoeApiIntegrationTests extends IntegrationTest {
 	}
 
 	@Test
+	void measuredAtIsStoredAsReported() {
+		Browser browser = loggedIn(uniqueEmail());
+		UUID session = startPlayback(browser);
+		UUID event = UUID.randomUUID();
+		Instant measuredAt = Instant.now().minusSeconds(90).truncatedTo(ChronoUnit.MILLIS);
+
+		browser.post("/api/qoe", batch(event(event, session, "PERIODIC", measuredAt)));
+
+		assertThat(this.jdbc
+			.queryForObject("select measured_at from qoe_events where client_event_id = ?", Timestamp.class, event)
+			.toInstant()).isEqualTo(measuredAt);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "+300000-01-01T00:00:00Z", "2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z" })
+	void measuredAtOutsideRangeIsRejected(String measuredAt) {
+		Browser browser = loggedIn(uniqueEmail());
+		UUID session = startPlayback(browser);
+
+		Response response = browser.post("/api/qoe", batch(event(UUID.randomUUID(), session, "PERIODIC", measuredAt)));
+
+		assertThat(response.status()).isEqualTo(400);
+		assertThat(response.json().get("code").asString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(count(session)).isZero();
+	}
+
+	@Test
+	void unknownSessionLooksMissing() {
+		Response response = loggedIn(uniqueEmail()).post("/api/qoe",
+				batch(event(UUID.randomUUID(), UUID.randomUUID(), "FINAL")));
+
+		assertThat(response.status()).isEqualTo(404);
+		assertThat(response.json().get("code").asString()).isEqualTo("NOT_FOUND");
+	}
+
+	@Test
+	void batchLargerThanKeepaliveLimitIsRejected() {
+		Browser browser = loggedIn(uniqueEmail());
+		UUID session = startPlayback(browser);
+		String[] events = new String[11];
+		for (int i = 0; i < events.length; i++) {
+			events[i] = event(UUID.randomUUID(), session, "PERIODIC");
+		}
+
+		Response response = browser.post("/api/qoe", batch(events));
+
+		assertThat(response.status()).isEqualTo(400);
+		assertThat(response.json().get("code").asString()).isEqualTo("VALIDATION_FAILED");
+	}
+
+	@Test
 	void emptyBatchIsRejected() {
 		Response response = loggedIn(uniqueEmail()).post("/api/qoe", "{\"events\": []}");
 
@@ -108,11 +164,19 @@ class QoeApiIntegrationTests extends IntegrationTest {
 	}
 
 	private static String event(UUID clientEventId, UUID sessionId, String kind) {
+		return event(clientEventId, sessionId, kind, Instant.now());
+	}
+
+	private static String event(UUID clientEventId, UUID sessionId, String kind, Instant measuredAt) {
+		return event(clientEventId, sessionId, kind, measuredAt.toString());
+	}
+
+	private static String event(UUID clientEventId, UUID sessionId, String kind, String measuredAt) {
 		return """
 				{"clientEventId": "%s", "sessionId": "%s", "kind": "%s", "startupMs": 812, "watchedMs": 60000,
 				 "positionSec": 60, "rebufferMs": 0, "rebufferCount": 0, "levelSwitches": 1,
-				 "errors": ["networkError:fragLoadError"], "measuredAt": "2026-10-14T00:00:00Z"}
-				""".formatted(clientEventId, sessionId, kind);
+				 "errors": ["networkError:fragLoadError"], "measuredAt": "%s"}
+				""".formatted(clientEventId, sessionId, kind, measuredAt);
 	}
 
 }
