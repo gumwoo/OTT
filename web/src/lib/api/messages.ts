@@ -18,5 +18,9 @@ export function messageFor(error: unknown): string {
     }
     return MESSAGES[error.code] ?? error.detail ?? '요청을 처리하지 못했습니다';
   }
-  return '연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요';
+  // fetch는 연결 실패를 TypeError로 던진다
+  if (error instanceof TypeError) {
+    return '연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요';
+  }
+  return '화면을 표시하지 못했습니다. 새로고침해 주세요';
 }

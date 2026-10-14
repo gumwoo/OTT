@@ -9,8 +9,7 @@ type Props = {
 
 const RATIO = { poster: 'aspect-[2/3]', still: 'aspect-video' } as const;
 
-// 포스터는 이미지가 없으면 제목을 대신 쓰고, 있으면 호버할 때 제목을 띄운다.
-// 스틸컷은 옆에 큰 제목이 따로 있어서 빈 면만 둔다 (docs/ui.md 이미지)
+// 스틸컷 옆에는 큰 제목이 따로 있어서 대체 제목을 쓰지 않는다 (docs/ui.md 이미지)
 export function Artwork({ contentId, title, kind, className = '' }: Props) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -35,7 +34,10 @@ export function Artwork({ contentId, title, kind, className = '' }: Props) {
         className={`${RATIO[kind]} bg-surface-raised w-full object-cover ${className}`}
       />
       {kind === 'poster' && (
-        <span className="bg-scrim text-text absolute inset-x-0 bottom-0 truncate px-2 py-1.5 text-sm opacity-0 transition-opacity group-hover:opacity-100">
+        <span
+          aria-hidden="true"
+          className="bg-scrim text-text absolute inset-x-0 bottom-0 truncate px-2 py-1.5 text-sm opacity-0 transition-opacity group-hover:opacity-100"
+        >
           {title}
         </span>
       )}

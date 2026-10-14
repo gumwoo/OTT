@@ -61,7 +61,7 @@ export function AccountPage() {
           disabled={change.isPending}
           className="bg-accent text-bg rounded-sm px-5 py-2 font-semibold disabled:opacity-60"
         >
-          {next}로 바꾸기
+          {next}으로 바꾸기
         </button>
         <button
           type="button"

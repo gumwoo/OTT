@@ -52,7 +52,9 @@ describe('refreshDelay', () => {
     expect(refreshDelay('2026-10-14T00:30:00Z', Date.parse('2026-10-14T00:00:00Z'))).toBe(900_000);
   });
 
-  it('never schedules sooner than five seconds', () => {
-    expect(refreshDelay('2026-10-14T00:00:01Z', Date.parse('2026-10-14T00:00:00Z'))).toBe(5_000);
+  // 클라이언트 시계가 서버보다 빨라 이미 지난 것처럼 보여도 연달아 부르지 않는다
+  it('falls back to one minute when the expiry looks too close or past', () => {
+    expect(refreshDelay('2026-10-14T00:00:05Z', Date.parse('2026-10-14T00:00:00Z'))).toBe(60_000);
+    expect(refreshDelay('2026-10-13T23:00:00Z', Date.parse('2026-10-14T00:00:00Z'))).toBe(60_000);
   });
 });

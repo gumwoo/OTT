@@ -49,7 +49,7 @@ export function Row({ title, items }: { title: string; items: CatalogItem[] }) {
                   className="transition-transform duration-200 group-hover:scale-105"
                 />
                 {item.requiredPlan === 'PREMIUM' && (
-                  <span className="bg-scrim text-accent absolute top-0 left-0 px-1.5 py-0.5 text-[11px] font-semibold tracking-wide">
+                  <span className="bg-scrim text-text absolute top-0 left-0 px-1.5 py-0.5 text-[11px] font-semibold tracking-wide">
                     PREMIUM
                   </span>
                 )}

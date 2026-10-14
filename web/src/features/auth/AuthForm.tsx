@@ -32,6 +32,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const submit = useMutation({
     mutationFn: () => (mode === 'login' ? login(email, password) : signup(email, password)),
     onSuccess: async (account) => {
+      queryClient.clear();
       queryClient.setQueryData(authKeys.me, account);
       await navigate('/');
     },

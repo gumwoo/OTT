@@ -35,7 +35,7 @@ function Featured({ item, playable }: { item: CatalogItem; playable: boolean }) 
         <h1 className="text-3xl font-bold md:text-5xl">{item.title}</h1>
         <p className="text-text-muted mt-2 text-sm">
           {formatDuration(item.durationSec)}
-          {item.requiredPlan === 'PREMIUM' && <span className="text-accent ml-2">PREMIUM</span>}
+          {item.requiredPlan === 'PREMIUM' && <span className="text-text ml-2">PREMIUM</span>}
         </p>
         <div className="mt-5 flex gap-2">
           {playable ? (

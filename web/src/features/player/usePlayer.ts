@@ -1,32 +1,49 @@
 import Hls from 'hls.js';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ApiError } from '../../lib/api/client';
-import { refreshDelay, refreshPlayback, sendQoe, type PlaybackGrant, type QoeEvent } from './api';
+import { refreshPlayback, sendQoe, type PlaybackGrant, type QoeEvent } from './api';
 import { createQoeTracker, type QoeTracker } from './qoe';
+import { startRefreshLoop } from './refreshLoop';
 
 const REPORT_INTERVAL_MS = 30_000;
-const RETRY_MS = 10_000;
 
-export function usePlayer(video: RefObject<HTMLVideoElement | null>, grant: PlaybackGrant) {
+export type PlayerGrant = PlaybackGrant & {
+  // performance.now() 기준. Startup은 재생 요청부터 잰다 (design.md §9)
+  requestedAt: number;
+};
+
+export type PlayerProblem = { kind: 'refresh'; error: ApiError } | { kind: 'media' };
+
+export function usePlayer(
+  video: RefObject<HTMLVideoElement | null>,
+  grant: PlayerGrant,
+): PlayerProblem | null {
   const tracker = useRef<QoeTracker | null>(null);
+  const [mediaFailed, setMediaFailed] = useState(false);
   // 정리는 선언 순서대로 돈다. hls.destroy()가 재생 위치를 0으로 돌리기 전에 FINAL을 보내야 한다
   useQoeReports(video, grant.sessionId, tracker);
-  useHls(video, grant.manifestUrl, tracker);
-  return usePlaybackRefresh(grant);
+  useHls(video, grant, tracker, setMediaFailed);
+  const refreshError = usePlaybackRefresh(grant);
+
+  if (refreshError) return { kind: 'refresh', error: refreshError };
+  if (mediaFailed) return { kind: 'media' };
+  return null;
 }
 
 // FE-09: 인스턴스는 effect 안에서 만들고 cleanup에서 destroy. StrictMode의 두 번 생성은 정상이다
 function useHls(
   videoRef: RefObject<HTMLVideoElement | null>,
-  manifestUrl: string,
+  grant: PlayerGrant,
   trackerRef: RefObject<QoeTracker | null>,
+  onFatal: (failed: boolean) => void,
 ) {
+  const { manifestUrl, requestedAt } = grant;
   useEffect(() => {
     const video = videoRef.current;
     if (!video) {
       return;
     }
-    const tracker = createQoeTracker(performance.now());
+    const tracker = createQoeTracker(requestedAt);
     trackerRef.current = tracker;
     const onPlaying = () => tracker.playing(performance.now());
     const onWaiting = () => tracker.waiting(performance.now());
@@ -36,12 +53,21 @@ function useHls(
     let hls: Hls | null = null;
     if (Hls.isSupported()) {
       const instance = new Hls();
+      let mediaRecovered = false;
       instance.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
         const level = instance.levels[data.level];
         tracker.levelSwitched(level ? `${level.height}p` : String(data.level));
       });
       instance.on(Hls.Events.ERROR, (_event, data) => {
         tracker.error(`${data.type}:${data.details}${data.fatal ? ':fatal' : ''}`);
+        if (!data.fatal) return;
+        // hls.js 권장 복구: 미디어 오류는 한 번 되살려 보고, 그 밖의 치명 오류는 멈춘다
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) {
+          mediaRecovered = true;
+          instance.recoverMediaError();
+          return;
+        }
+        onFatal(true);
       });
       instance.loadSource(manifestUrl);
       instance.attachMedia(video);
@@ -51,6 +77,7 @@ function useHls(
       video.src = manifestUrl;
     } else {
       tracker.error('hls-unsupported');
+      onFatal(true);
     }
     video.play().catch((error: unknown) => {
       tracker.error(`play:${error instanceof Error ? error.name : 'unknown'}`);
@@ -61,10 +88,9 @@ function useHls(
       video.removeEventListener('waiting', onWaiting);
       hls?.destroy();
     };
-  }, [videoRef, manifestUrl, trackerRef]);
+  }, [videoRef, manifestUrl, requestedAt, trackerRef, onFatal]);
 }
 
-// 재생 중에는 주기적으로, 떠날 때 FINAL을 한 번 보낸다 (app-design.md §4 qoe_events)
 function useQoeReports(
   videoRef: RefObject<HTMLVideoElement | null>,
   sessionId: string,
@@ -100,13 +126,19 @@ function useQoeReports(
         report('PERIODIC', true);
       }
     };
+    // 뒤로가기 캐시(bfcache)에서 돌아오면 나중에 떠날 때 FINAL을 다시 보낸다
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) finalSent = false;
+    };
     const timer = window.setInterval(() => report('PERIODIC', false), REPORT_INTERVAL_MS);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pagehide', final);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pagehide', final);
+      window.removeEventListener('pageshow', onPageShow);
       final();
     };
   }, [videoRef, sessionId, trackerRef]);
@@ -114,33 +146,15 @@ function useQoeReports(
 
 function usePlaybackRefresh(grant: PlaybackGrant): ApiError | null {
   const [error, setError] = useState<ApiError | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    const schedule = (delay: number) => {
-      timer = window.setTimeout(() => {
-        refreshPlayback(grant.sessionId)
-          .then((next) => {
-            if (!cancelled) schedule(refreshDelay(next.expiresAt, Date.now()));
-          })
-          .catch((reason: unknown) => {
-            if (cancelled) return;
-            // 4xx는 등급·소유 문제라 다시 시도해도 같다. 네트워크·5xx만 재시도
-            if (reason instanceof ApiError && reason.status < 500) {
-              setError(reason);
-            } else {
-              schedule(RETRY_MS);
-            }
-          });
-      }, delay);
-    };
-    schedule(refreshDelay(grant.expiresAt, Date.now()));
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [grant.sessionId, grant.expiresAt]);
-
+  const { sessionId, expiresAt } = grant;
+  useEffect(
+    () =>
+      startRefreshLoop({
+        grant: { sessionId, expiresAt },
+        refresh: refreshPlayback,
+        onStop: setError,
+      }),
+    [sessionId, expiresAt],
+  );
   return error;
 }

@@ -102,9 +102,9 @@ describe('account', () => {
     renderApp('/account');
 
     expect(await screen.findByText(/모의 구독입니다/)).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'PREMIUM로 바꾸기' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'PREMIUM으로 바꾸기' }));
 
     await waitFor(() => expect(requested).toEqual({ plan: 'PREMIUM' }));
-    expect(await screen.findByRole('button', { name: 'BASIC로 바꾸기' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'BASIC으로 바꾸기' })).toBeInTheDocument();
   });
 });

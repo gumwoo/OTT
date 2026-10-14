@@ -320,6 +320,8 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
   - **QoE 전송은 `fetch(..., { keepalive: true })`**를 쓰고, 화면을 떠날 때(`visibilitychange` hidden) 남은 이벤트를 보낸다. `navigator.sendBeacon`은 헤더를 붙일 수 없어서 CSRF 헤더가 필요한 `/api/qoe`로 보낼 수 없다 [확인]. keepalive 요청은 64KiB 제한이 있으므로 배치 크기를 그 안으로 유지한다.
 - API 클라이언트가 CSRF 토큰을 헤더에 붙이고, 오류는 ProblemDetail의 `code`로 처리한다. 앱 시작 시와 로그인·로그아웃 직후 `GET /api/csrf`를 호출한다 (§5 CSRF 흐름).
   - 4xx는 재시도하지 않고 화면에서 `code`로 분기한다. 5xx만 Error Boundary로 보낸다.
+  - 단, loader에서 난 4xx(없는 콘텐츠, 등급 부족으로 재생 불가)는 라우트의 오류 화면이 받는다. 그 화면도 `code`로 문구와 링크를 고른다.
+  - 어느 요청이든 401 `UNAUTHENTICATED`가 오면 캐시를 비우고 `/login`으로 새로 연다. 캐시에 남은 내 정보 때문에 로그인 화면에 못 들어가는 것을 막는다 (검증 에이전트가 재현).
   - `/api/me`는 401이면 에러가 아니라 `null`(로그인 안 됨)로 취급한다.
 - 빌드 결과물(`dist/`)은 app 버킷에 올린다. 기존 `player/`는 이 앱으로 대체한다.
 - 플레이어 E2E는 Playwright의 **chrome 채널**로 돌린다. 기본 번들 Chromium에는 일부 코덱이 없어 H.264 재생 확인이 실패할 수 있다.

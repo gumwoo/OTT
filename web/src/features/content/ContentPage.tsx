@@ -20,9 +20,7 @@ export function ContentPage() {
           <h1 className="text-3xl font-bold md:text-4xl">{content.title}</h1>
           <p className="text-text-muted mt-2 text-sm">
             {formatDuration(content.durationSec)}
-            {content.requiredPlan === 'PREMIUM' && (
-              <span className="text-accent ml-2">PREMIUM</span>
-            )}
+            {content.requiredPlan === 'PREMIUM' && <span className="text-text ml-2">PREMIUM</span>}
           </p>
         </div>
       </div>

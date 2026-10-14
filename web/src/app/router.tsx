@@ -8,6 +8,7 @@ import { CatalogPage } from '../features/catalog/CatalogPage';
 import { ContentPage } from '../features/content/ContentPage';
 import { queryClient } from './queryClient';
 import { RootLayout } from './RootLayout';
+import { LoadingPage } from './LoadingPage';
 import { RouteError } from './RouteError';
 
 async function redirectIfSignedIn() {
@@ -18,6 +19,7 @@ async function redirectIfSignedIn() {
 export const routes: RouteObject[] = [
   {
     Component: RootLayout,
+    HydrateFallback: LoadingPage,
     ErrorBoundary: RouteError,
     children: [
       { path: 'login', loader: redirectIfSignedIn, element: <AuthForm mode="login" /> },
