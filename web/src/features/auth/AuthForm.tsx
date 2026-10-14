@@ -44,51 +44,58 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <main className="mx-auto mt-24 w-full max-w-sm px-6">
-      <h1 className="text-2xl font-bold">{copy.title}</h1>
-      <form onSubmit={onSubmit} className="mt-8 flex flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm">
-          이메일
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="border-line bg-surface text-text rounded-sm border px-3 py-2 text-base"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          비밀번호
-          <input
-            type="password"
-            required
-            minLength={mode === 'signup' ? 8 : undefined}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="border-line bg-surface text-text rounded-sm border px-3 py-2 text-base"
-          />
-        </label>
-        {submit.isError && (
-          <p role="alert" className="text-danger text-sm">
-            {messageFor(submit.error)}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={submit.isPending}
-          className="bg-accent text-bg mt-2 rounded-sm py-2 font-semibold disabled:opacity-60"
-        >
-          {copy.submit}
-        </button>
-      </form>
-      <p className="text-text-muted mt-6 text-sm">
-        {copy.switchText}{' '}
-        <Link to={copy.switchTo} className="text-text underline underline-offset-4">
-          {copy.switchLink}
-        </Link>
-      </p>
+    <main className="relative grid min-h-[calc(100dvh-5rem)] place-items-center px-6 py-24">
+      <img
+        src="/artwork/spring/still.jpg"
+        alt=""
+        className="absolute inset-0 h-full w-full object-cover opacity-30"
+      />
+      <div className="bg-bg/85 relative w-full max-w-sm rounded-lg p-8">
+        <h1 className="text-2xl font-bold">{copy.title}</h1>
+        <form onSubmit={onSubmit} className="mt-8 flex flex-col gap-4">
+          <label className="flex flex-col gap-1 text-sm">
+            이메일
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="border-line bg-surface text-text rounded-md border px-3 py-2.5 text-base"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            비밀번호
+            <input
+              type="password"
+              required
+              minLength={mode === 'signup' ? 8 : undefined}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="border-line bg-surface text-text rounded-md border px-3 py-2.5 text-base"
+            />
+          </label>
+          {submit.isError && (
+            <p role="alert" className="text-danger text-sm">
+              {messageFor(submit.error)}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={submit.isPending}
+            className="bg-text text-bg mt-2 rounded-md py-2.5 font-semibold hover:opacity-90 disabled:opacity-60"
+          >
+            {copy.submit}
+          </button>
+        </form>
+        <p className="text-text-muted mt-6 text-sm">
+          {copy.switchText}{' '}
+          <Link to={copy.switchTo} className="text-text underline underline-offset-4">
+            {copy.switchLink}
+          </Link>
+        </p>
+      </div>
     </main>
   );
 }

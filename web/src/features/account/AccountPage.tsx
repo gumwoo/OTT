@@ -32,7 +32,7 @@ export function AccountPage() {
   const next: Plan = plan === 'PREMIUM' ? 'BASIC' : 'PREMIUM';
 
   return (
-    <main className="max-w-2xl px-6 py-10 md:px-12">
+    <main className="max-w-2xl px-6 pt-24 md:px-10">
       <h1 className="text-2xl font-bold">계정</h1>
       <dl className="divide-line border-line mt-8 divide-y border-y">
         <div className="flex justify-between py-4">

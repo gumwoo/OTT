@@ -183,7 +183,7 @@ formLogin 대신 `POST /api/auth/login`(JSON) 컨트롤러로 로그인한다. �
 - 만료 시각은 초 단위로 자른다. 정책의 `DateLessThan`이 초 단위라서, 응답에 소수점까지 주면 실제 만료가 표시보다 앞선다.
 - refresh 횟수에는 상한을 두지 않는다. 매번 구독을 다시 확인하므로 등급이 내려가거나 만료되면 거기서 멈춘다.
 - 재생 요청은 공개 전 콘텐츠의 존재를 `NOT_PUBLISHED`로 드러낸다. 문서 순서(등급 확인 → 공개 확인)를 따른 결과이고, 콘텐츠 ID는 비밀이 아니므로 받아들인다.
-- 국가 차단은 여기서 하지 않는다. Cookie는 발급되고 Edge가 403을 낸다. 플레이어는 사유 코드(`GEO_BLOCKED` 등)를 보고 안내 문구를 띄운다.
+- 국가 차단은 여기서 하지 않는다. Cookie는 발급되고 Edge가 403을 낸다. 플레이어는 `X-Playback-Denied` 헤더의 사유 코드(`GEO_BLOCKED` 등)를 보고 안내 문구를 띄운다 (design.md §7).
 
 Cookie 갱신(`POST /api/playback/{sessionId}/refresh`):
 
@@ -307,8 +307,9 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 | `/contents/:id` | 상세 |
 | `/contents/:id/watch` | 재생. 들어올 때 loader가 재생 시작 API를 한 번 부르고, 재검증으로 세션이 또 생기지 않게 막는다 |
 | `/account` | 내 구독 |
+| `/credits` | 작품 출처 (로그인 없이 볼 수 있다) |
 
-- 폴더 구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼, `ApiError`, CSRF), `src/features/{auth,catalog,content,player,account}`, `src/components`, `src/test`, 루트 `e2e/`.
+- 폴더 구조: `src/app`(라우터, QueryClient), `src/lib/api`(fetch 래퍼, `ApiError`, CSRF), `src/lib/devMode.ts`(개발자 모드), `src/features/{auth,catalog,content,player,account,credits}`, `src/components`, `src/test`, 루트 `e2e/`.
 - 서버 상태는 TanStack Query로만 관리한다. 전역 상태 라이브러리는 두지 않는다. 모든 query는 `queryOptions()` + feature별 key factory로 정의한다.
 - **React Router 8 Data mode** (`createBrowserRouter`, `react-router/dom`의 `RouterProvider`). v8에서 `react-router-dom` 패키지가 없어졌다. 인증이 필요한 화면은 레이아웃 라우트의 middleware에서 `/api/me`를 확인하고 없으면 `/login`으로 보낸다.
 - 플레이어는 기존 `player/qoe.js` 로직을 `features/player`(`qoe.ts`, `usePlayer.ts`)로 옮겼다. 재생 시작 → refresh 타이머 → 종료 시 QoE 보고.
@@ -317,6 +318,8 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
   - 개발 모드(StrictMode)는 화면을 한 번 마운트했다 해제하므로 빈 FINAL이 하나 더 생긴다. 운영 빌드에는 없다.
   - hls.js는 크기가 커서(약 500KB) 재생 화면을 lazy 라우트로 분리했다.
   - hls.js 인스턴스는 effect 안에서 만들고 cleanup에서 `destroy()`한다. 개발 모드(StrictMode)에서 두 번 생성·파괴되는 것이 정상이며, ref로 막지 않는다.
+  - 치명 오류가 403이고 응답에 `X-Playback-Denied`가 있으면 사유별 안내를 띄운다. 사유 없는 403과 그 밖의 오류는 "영상을 불러오지 못했습니다"다. 미디어 오류만 hls.js 권장대로 한 번 복구를 시도한다.
+  - 재생 진단 패널은 개발자 모드에서만 연다 (ui.md "개발자 모드"). 플레이어가 잰 값만 보여주고, CDN 헤더처럼 로컬에 없는 값은 "연동 필요"로 둔다.
   - **QoE 전송은 `fetch(..., { keepalive: true })`**를 쓰고, 화면을 떠날 때(`visibilitychange` hidden) 남은 이벤트를 보낸다. `navigator.sendBeacon`은 헤더를 붙일 수 없어서 CSRF 헤더가 필요한 `/api/qoe`로 보낼 수 없다 [확인]. keepalive 요청은 64KiB 제한이 있으므로 배치 크기를 그 안으로 유지한다.
 - API 클라이언트가 CSRF 토큰을 헤더에 붙이고, 오류는 ProblemDetail의 `code`로 처리한다. 앱 시작 시와 로그인·로그아웃 직후 `GET /api/csrf`를 호출한다 (§5 CSRF 흐름).
   - 4xx는 재시도하지 않고 화면에서 `code`로 분기한다. 5xx만 Error Boundary로 보낸다.

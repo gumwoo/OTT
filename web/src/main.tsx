@@ -4,8 +4,12 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router/dom';
 import { queryClient } from './app/queryClient';
 import { router } from './app/router';
+import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 import './index.css';
 import { refreshCsrf } from './lib/api/client';
+import { syncDevModeFromUrl } from './lib/devMode';
+
+syncDevModeFromUrl(window.location.search);
 
 const root = document.getElementById('root');
 if (!root) {

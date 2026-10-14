@@ -10,7 +10,8 @@ const BANNED_CLASSES = [
   [/(^|\s)animate-(pulse|ping|bounce)(\s|$)/, '깜빡이는 장식'],
 ];
 
-const EMOJI = /\p{Extended_Pictographic}/u;
+// ©·®·™도 Extended_Pictographic에 들어 있지만 저작권 표기에 쓰는 일반 문자라 뺀다
+const EMOJI = /(?![©®™])\p{Extended_Pictographic}/u;
 
 function checkClassString(context, node, value) {
   for (const [pattern, label] of BANNED_CLASSES) {

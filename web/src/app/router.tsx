@@ -6,6 +6,7 @@ import { requireAccount } from '../features/auth/requireAccount';
 import { catalogQueryOptions, contentQueryOptions } from '../features/catalog/api';
 import { CatalogPage } from '../features/catalog/CatalogPage';
 import { ContentPage } from '../features/content/ContentPage';
+import { CreditsPage } from '../features/credits/CreditsPage';
 import { queryClient } from './queryClient';
 import { RootLayout } from './RootLayout';
 import { LoadingPage } from './LoadingPage';
@@ -24,6 +25,7 @@ export const routes: RouteObject[] = [
     children: [
       { path: 'login', loader: redirectIfSignedIn, element: <AuthForm mode="login" /> },
       { path: 'signup', loader: redirectIfSignedIn, element: <AuthForm mode="signup" /> },
+      { path: 'credits', Component: CreditsPage },
       {
         middleware: [requireAccount],
         ErrorBoundary: RouteError,

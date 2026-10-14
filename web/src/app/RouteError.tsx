@@ -16,7 +16,7 @@ export function RouteError() {
   }, [error]);
 
   return (
-    <main className="px-6 py-16 md:px-12">
+    <main className="px-6 pt-24 pb-16 md:px-10">
       <p className="text-lg">{message}</p>
       <div className="mt-6 flex gap-4 text-sm">
         {needsPlan && (

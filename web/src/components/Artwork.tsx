@@ -4,43 +4,24 @@ type Props = {
   contentId: string;
   title: string;
   kind: 'poster' | 'still';
+  // 첫 화면의 대표 이미지만 바로 읽는다
+  priority?: boolean;
   className?: string;
 };
 
-const RATIO = { poster: 'aspect-[2/3]', still: 'aspect-video' } as const;
-
-// 스틸컷 옆에는 큰 제목이 따로 있어서 대체 제목을 쓰지 않는다 (docs/ui.md 이미지)
-export function Artwork({ contentId, title, kind, className = '' }: Props) {
+// 이미지가 없으면 같은 자리를 빈 면으로 둔다. 제목은 부르는 쪽이 따로 쓴다 (docs/ui.md 이미지)
+export function Artwork({ contentId, title, kind, priority = false, className = '' }: Props) {
   const [failed, setFailed] = useState(false);
   if (failed) {
-    return (
-      <div
-        aria-hidden={kind === 'still'}
-        className={`${RATIO[kind]} bg-surface-raised flex w-full items-end p-3 ${className}`}
-      >
-        {kind === 'poster' && (
-          <span className="text-text line-clamp-3 text-sm font-semibold">{title}</span>
-        )}
-      </div>
-    );
+    return <div aria-hidden="true" className={`bg-surface-raised ${className}`} />;
   }
   return (
-    <>
-      <img
-        src={`/artwork/${encodeURIComponent(contentId)}/${kind}.jpg`}
-        alt={title}
-        loading="lazy"
-        onError={() => setFailed(true)}
-        className={`${RATIO[kind]} bg-surface-raised w-full object-cover ${className}`}
-      />
-      {kind === 'poster' && (
-        <span
-          aria-hidden="true"
-          className="bg-scrim text-text absolute inset-x-0 bottom-0 truncate px-2 py-1.5 text-sm opacity-0 transition-opacity group-hover:opacity-100"
-        >
-          {title}
-        </span>
-      )}
-    </>
+    <img
+      src={`/artwork/${encodeURIComponent(contentId)}/${kind}.jpg`}
+      alt={kind === 'poster' ? title : ''}
+      loading={priority ? 'eager' : 'lazy'}
+      onError={() => setFailed(true)}
+      className={`bg-surface-raised object-cover ${className}`}
+    />
   );
 }
