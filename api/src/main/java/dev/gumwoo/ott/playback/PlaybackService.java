@@ -66,6 +66,13 @@ public class PlaybackService {
 		return grant(session);
 	}
 
+	@Transactional(readOnly = true)
+	public void requireOwnSession(long userId, UUID sessionId) {
+		if (this.sessions.findByIdAndUserId(sessionId, userId).isEmpty()) {
+			throw new ApiException(ErrorCode.NOT_FOUND);
+		}
+	}
+
 	private SubscriptionView requirePlan(long userId, Plan required) {
 		SubscriptionView subscription = this.subscriptions.get(userId);
 		if (!subscription.plan().covers(required)) {
