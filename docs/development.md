@@ -36,6 +36,37 @@ docker compose exec -T postgres psql -U ott -d ott < scripts/dev/seed-contents.s
 - seed는 Flyway 마이그레이션이 아니다. 테이블은 api가 뜰 때 Flyway가 만드므로 api를 한 번 띄운 뒤에 넣는다. 다시 넣어도 같은 값으로 덮인다
 - 재생 진단 패널은 `http://localhost:5180/?devtools=1`로 켠 뒤 플레이어에서 `Shift + D` (ui.md "개발자 모드")
 
+## 변환 Job 로컬 실행
+
+api에 변환 작업을 등록하고(`POST /api/admin/contents/{id}/transcode-jobs`, ADMIN 세션), 받은 값으로 transcoder 컨테이너를 돌린다. 등록과 실행을 묶는 운영자 CLI는 개발 순서 5번에서 만든다.
+
+```bash
+docker build -t ott-transcoder:local transcoder
+docker run --rm --env-file job.env --tmpfs /work:uid=999   -v "$PWD/.local/src:/data/source:ro" -v "$PWD/.local/content:/data/content"   ott-transcoder:local
+```
+
+`job.env`에는 등록 응답의 `id`·`version`과 등록 때 보낸 `sourceKey`·`sourceHash`·`profileVersion`을 넣는다.
+
+```
+JOB_ID=<id>
+CONTENT_ID=<contentId>
+VERSION=<version>
+SOURCE_KEY=<.local/src 기준 경로>
+SOURCE_HASH=<sha256>
+PROFILE_VERSION=hls-h264-v1
+API_URL=http://host.docker.internal:8085
+JOB_TOKEN=local-dev-job-token
+SOURCE_ROOT=/data/source
+CONTENT_ROOT=/data/content
+WORK_DIR=/work
+```
+
+- `JOB_TOKEN`은 `application-local.properties`의 `ott.internal.dev-token`과 같아야 한다. local·test 프로필에서만 통한다
+- 관리자 계정은 api를 띄울 때 `OTT_ADMIN_EMAIL`·`OTT_ADMIN_PASSWORD` 환경 변수로 만든다
+- `docker stop`은 SIGTERM을 보낸다. transcoder는 ffmpeg를 끝내고 `FAILED(TERMINATED)`를 보고한다
+- 컨테이너는 uid 999로 돈다. Linux 호스트에서는 `.local/content`에 uid 999가 쓸 수 있어야 하고, `host.docker.internal`을 쓰려면 `--add-host=host.docker.internal:host-gateway`를 붙인다 (Docker Desktop은 둘 다 필요 없다)
+- 원본에 오디오 트랙이 있어야 한다. `media/transcode.sh`와 같은 래더라 오디오가 없으면 ffmpeg가 실패한다
+
 ## 폴더
 
 | 폴더 | 내용 |

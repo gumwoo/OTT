@@ -314,6 +314,19 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 - 로컬 실행 모드는 §10의 저장소 인터페이스를 쓴다. 로컬 개발 중에는 AWS를 쓰지 않는다.
 - 미완성 버전 경로 정리는 CronJob이 한다 (design.md §10 1단계).
 
+구현에서 정한 것 (결정: 2026-10-15):
+
+- 입력은 환경 변수다: `JOB_ID`, `CONTENT_ID`, `VERSION`, `SOURCE_KEY`, `SOURCE_HASH`, `PROFILE_VERSION`, `API_URL`, `SOURCE_ROOT`, `CONTENT_ROOT`, `WORK_DIR`, `HEARTBEAT_SECONDS`(기본 15). Job 토큰은 `JOB_TOKEN_FILE`(projected ServiceAccount 토큰. 갱신되므로 보낼 때마다 다시 읽는다) 또는 로컬용 `JOB_TOKEN`.
+- 변환 프로파일은 `hls-h264-v1`(`media/transcode.sh`와 같은 4단 래더, 6초 세그먼트). 작업의 `profileVersion`이 다르면 변환하지 않고 실패로 보고한다.
+- 산출물 검증은 `transcoder.hls`가 한다. `media/validate_hls.py`와 같은 기준이고, 두 곳을 같이 고쳐야 한다.
+- 종료 코드: 0 게시 응답을 받음(`PUBLISHED`·`PUBLISHED_SUPERSEDED`), 1 예상한 실패, 2 예상 밖 오류(`TRANSCODE_FAILED`로 보고). API가 받지 않는 내부 코드(원본 없음 같은 설정 오류, API 거부)는 `TRANSCODE_FAILED`로 바꿔 보고한다.
+- 환경 변수가 잘못돼 API 클라이언트를 만들기 전에 실패하면 보고하지 못한다. 작업은 `REQUESTED`로 남고 CronJob이 `NOT_STARTED`로 확정한다.
+- 409 `JOB_FAILED`를 받으면 다시 보고하지 않고 종료 코드 1로 끝낸다. `RUNNING`·`VALIDATED`·`UPLOADED` 보고와 게시는 5xx·연결 오류(연결 끊김, 토큰 파일 읽기 실패 포함)에 두 번 재시도한다(2초, 5초). heartbeat 실패는 로그만 남긴다.
+- `FAILED` 보고는 한 번만 보낸다. 종료 유예 시간(Kubernetes 기본 30초) 안에 끝내기 위해서다. SIGTERM부터 종료까지 최악값은 신호 확인 1초 + ffmpeg 종료 대기 5초 + 진행 중인 heartbeat 요청 5초 + `FAILED` 보고 5초로 약 16초다(요청 타임아웃 5초 기준, 코드로 계산한 값). 원본 복사는 아직 중간에 멈추지 않는다(로컬 구현).
+- 작업 디렉터리는 `WORK_DIR/{jobId}`. 성공하면 지우고, 실패하면 원인을 볼 수 있게 남긴다.
+- 로컬 업로드는 배타적 생성이라 덮어쓰지 않는다. 다만 쓰는 도중에 죽으면 반쯤 쓴 파일이 남는다(S3 `PutObject`는 객체 단위로 원자적이라 다르다). 그 버전은 다시 쓰이지 않고 다음 실행은 `VERSION_DIRTY`다.
+- 이미지: `python:3.13-slim` + Debian `ffmpeg`, uid 999, `ENTRYPOINT ["transcoder"]` (exec 형식, Python이 PID 1).
+
 ## 9. 프론트엔드 (`web/`)
 
 | 경로 | 화면 |
