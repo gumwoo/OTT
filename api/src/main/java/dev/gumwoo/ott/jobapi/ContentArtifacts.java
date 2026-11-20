@@ -7,4 +7,7 @@ public interface ContentArtifacts {
 
 	List<String> problems(String contentId, int version);
 
+	// 지운 것이 있으면 true. 없으면 아무것도 하지 않는다
+	boolean delete(String contentId, int version);
+
 }

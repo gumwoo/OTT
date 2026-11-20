@@ -8,3 +8,7 @@ api:
   playback:
     resourceBaseUrl: http://localhost:5180
     keyPairId: LOCAL
+
+opsCheck:
+  # 로컬에서 확정 시점을 보기 쉽게 1분마다
+  schedule: "* * * * *"

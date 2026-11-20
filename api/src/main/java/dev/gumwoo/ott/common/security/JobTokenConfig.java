@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,6 +20,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration(proxyBeanMethods = false)
+@ConditionalOnWebApplication
 class JobTokenConfig {
 
 	private static final Logger log = LoggerFactory.getLogger(JobTokenConfig.class);

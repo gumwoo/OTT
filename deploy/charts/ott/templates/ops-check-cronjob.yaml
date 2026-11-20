@@ -1,0 +1,73 @@
+{{- $api := .Values.api -}}
+{{- $ops := .Values.opsCheck -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-ops-check
+  labels:
+    {{- include "ott.labels" . | nindent 4 }}
+    {{- include "ott.opsCheck.selectorLabels" . | nindent 4 }}
+spec:
+  schedule: {{ $ops.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "ott.labels" . | nindent 12 }}
+            {{- include "ott.opsCheck.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ .Release.Name }}-ops-check
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ $ops.runAsUser }}
+            runAsGroup: {{ $ops.runAsUser }}
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ops-check
+              image: "{{ $api.image.repository }}:{{ $api.image.tag }}"
+              imagePullPolicy: {{ $api.image.pullPolicy }}
+              env:
+                {{- include "ott.api.commonEnv" . | nindent 16 }}
+                - name: SPRING_MAIN_WEB_APPLICATION_TYPE
+                  value: none
+                - name: OTT_OPS_CHECK_RUN
+                  value: "true"
+                - name: OTT_OPS_CHECK_LOST_AFTER
+                  value: {{ $ops.lostAfter | quote }}
+                - name: OTT_OPS_CHECK_START_DEADLINE
+                  value: {{ $ops.startDeadline | quote }}
+                - name: OTT_OPS_CHECK_CLEANUP_AFTER
+                  value: {{ $ops.cleanupAfter | quote }}
+              resources:
+                {{- toYaml $ops.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+                - { name: signing, mountPath: /var/run/secrets/ott-signing, readOnly: true }
+                # 미완성 버전을 지우므로 쓰기로 붙인다. api는 읽기만 한다
+                - { name: content, mountPath: /data/content }
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+            - name: signing
+              secret:
+                secretName: {{ $api.playback.signingSecret }}
+            - name: content
+              persistentVolumeClaim:
+                claimName: {{ $api.contentClaim }}
