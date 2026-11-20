@@ -51,3 +51,13 @@ updates:
     groups:
       uv:
         patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /scripts/admin
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      uv:
+        patterns: ["*"]

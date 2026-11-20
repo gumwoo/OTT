@@ -21,6 +21,7 @@ jobs:
       transcoder: ${{ steps.diff.outputs.transcoder }}
       infra: ${{ steps.diff.outputs.infra }}
       scripts: ${{ steps.diff.outputs.scripts }}
+      admin: ${{ steps.diff.outputs.admin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,6 +43,7 @@ jobs:
               echo "$m=$(has "$m")"
             done
             echo "scripts=$(has '(measure|media)')"
+            echo "admin=$(has '(scripts/admin|deploy)')"
           } >> "$GITHUB_OUTPUT"
 
   api:
@@ -117,6 +119,31 @@ jobs:
       - run: uv run mypy src tests
       - run: uv run pytest
 
+  admin:
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: scripts/admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.0"
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy src tests
+      - run: uv run pytest
+      # K8-08: 운영자 CLI가 그리는 Job 매니페스트를 스키마로 검사한다. 렌더링 실패가 묻히지 않게 pipefail
+      - shell: bash
+        run: |
+          uv run ott-admin manifest --job-json tests/fixtures/job.json \
+            --job-api-url http://ott-api.ott.svc:8080 --template ../../deploy/jobs/transcode-job.yaml \
+            | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c \
+              -strict -summary -kubernetes-version 1.35.0 -
+
   infra:
     needs: changes
     if: needs.changes.outputs.infra == 'true'
@@ -157,7 +184,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [changes, api, web, transcoder, infra, scripts]
+    needs: [changes, api, web, transcoder, admin, infra, scripts]
     runs-on: ubuntu-24.04
     steps:
       - name: all required jobs passed or skipped
