@@ -38,33 +38,23 @@ docker compose exec -T postgres psql -U ott -d ott < scripts/dev/seed-contents.s
 
 ## 변환 Job 로컬 실행
 
-api에 변환 작업을 등록하고(`POST /api/admin/contents/{id}/transcode-jobs`, ADMIN 세션), 받은 값으로 transcoder 컨테이너를 돌린다. 등록과 실행을 묶는 운영자 CLI는 개발 순서 5번에서 만든다.
+운영자 CLI(`scripts/admin`)가 작업 등록과 실행을 묶는다. 저장소 루트에서 실행한다.
 
 ```bash
 docker build -t ott-transcoder:local transcoder
-docker run --rm --env-file job.env --tmpfs /work:uid=999   -v "$PWD/.local/src:/data/source:ro" -v "$PWD/.local/content:/data/content"   ott-transcoder:local
+export OTT_ADMIN_EMAIL=... OTT_ADMIN_PASSWORD=...   # api를 띄울 때 넣은 관리자 계정
+uv run --project scripts/admin ott-admin content-add sample-1 --title "Sample" --plan BASIC --duration 90
+uv run --project scripts/admin ott-admin transcode sample-1 sample.mp4
 ```
 
-`job.env`에는 등록 응답의 `id`·`version`과 등록 때 보낸 `sourceKey`·`sourceHash`·`profileVersion`을 넣는다.
-
-```
-JOB_ID=<id>
-CONTENT_ID=<contentId>
-VERSION=<version>
-SOURCE_KEY=<.local/src 기준 경로>
-SOURCE_HASH=<sha256>
-PROFILE_VERSION=hls-h264-v1
-API_URL=http://host.docker.internal:8085
-JOB_TOKEN=local-dev-job-token
-SOURCE_ROOT=/data/source
-CONTENT_ROOT=/data/content
-WORK_DIR=/work
-```
-
-- `JOB_TOKEN`은 `application-local.properties`의 `ott.internal.dev-token`과 같아야 한다. local·test 프로필에서만 통한다
-- 관리자 계정은 api를 띄울 때 `OTT_ADMIN_EMAIL`·`OTT_ADMIN_PASSWORD` 환경 변수로 만든다
-- `docker stop`은 SIGTERM을 보낸다. transcoder는 ffmpeg를 끝내고 `FAILED(TERMINATED)`를 보고한다
-- 컨테이너는 uid 999로 돈다. Linux 호스트에서는 `.local/content`에 uid 999가 쓸 수 있어야 하고, `host.docker.internal`을 쓰려면 `--add-host=host.docker.internal:host-gateway`를 붙인다 (Docker Desktop은 둘 다 필요 없다)
+- `transcode`는 `.local/src` 기준 원본의 SHA-256을 구해 작업을 등록하고, `ott-transcoder:local` 컨테이너를 돌린 뒤 최종 상태를 출력한다. 게시되지 않았거나 컨테이너가 실패하면 종료 코드 1
+- 그 밖의 명령: `job <jobId> [--wait] [--wait-timeout 초]`, `rollback <contentId> <version>`, `manifest <jobId> --job-api-url <클러스터 안 api 주소>`
+- `--runner kubectl`은 `deploy/jobs/transcode-job.yaml`을 채워 `kubectl create` 한다. 클러스터 준비(네임스페이스, `transcoder` ServiceAccount, `ott-source`·`ott-content` PVC)는 개발 순서 6번(kind)에서 한다
+- `--runner none`은 등록만 하고 끝낸다
+- 관리자 계정은 api를 띄울 때 `OTT_ADMIN_EMAIL`·`OTT_ADMIN_PASSWORD` 환경 변수로 만든다. CLI도 같은 변수를 읽고, 없으면 물어본다
+- Job 토큰 기본값 `local-dev-job-token`은 `application-local.properties`의 `ott.internal.dev-token`과 같아야 한다. local·test 프로필에서만 통한다
+- `docker stop transcode-<contentId>-v<n>`은 SIGTERM을 보낸다. transcoder는 ffmpeg를 끝내고 `FAILED(TERMINATED)`를 보고한다
+- 컨테이너는 uid 999로 돈다. Linux 호스트에서는 `.local/content`에 uid 999가 쓸 수 있어야 한다
 - 원본에 오디오 트랙이 있어야 한다. `media/transcode.sh`와 같은 래더라 오디오가 없으면 ffmpeg가 실패한다
 
 ## 폴더
@@ -76,6 +66,8 @@ WORK_DIR=/work
 | `transcoder` | 변환 Job |
 | `infra` | Terraform |
 | `media` | FFmpeg 변환, 결과 검증, S3 업로드 스크립트 |
+| `scripts/admin` | 운영자 CLI (콘텐츠 등록, 변환 요청·실행, 롤백) |
+| `deploy` | Kubernetes 매니페스트 (변환 Job 템플릿) |
 | `measure` | CloudFront 캐시와 응답 시간 측정 스크립트 |
 | `docs` | 설계, ADR, 개발 규칙 |
 

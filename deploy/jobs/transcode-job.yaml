@@ -1,0 +1,94 @@
+# 운영자 CLI(scripts/admin)가 자리표시자를 채워 kubectl create 한다. 개별 Job은 Argo CD가 추적하지 않는다 (design.md §4, K8-09)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "${K8S_JOB_NAME}"
+  namespace: "${NAMESPACE}"
+  labels:
+    app.kubernetes.io/name: transcoder
+    app.kubernetes.io/component: transcoder
+    app.kubernetes.io/part-of: ott
+    ott.gumwoo.dev/content-id: "${CONTENT_ID}"
+    ott.gumwoo.dev/version: "${VERSION}"
+spec:
+  # 재시도한 Pod가 처음부터 다시 변환하면 한 버전에 산출물이 섞인다. 재시도는 새 버전으로 (design.md §4)
+  backoffLimit: 0
+  activeDeadlineSeconds: ${ACTIVE_DEADLINE_SECONDS}
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transcoder
+        app.kubernetes.io/component: transcoder
+        app.kubernetes.io/part-of: ott
+    spec:
+      restartPolicy: Never
+      serviceAccountName: transcoder
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: transcoder
+          image: "${IMAGE}"
+          env:
+            - { name: JOB_ID, value: "${JOB_ID}" }
+            - { name: CONTENT_ID, value: "${CONTENT_ID}" }
+            - { name: VERSION, value: "${VERSION}" }
+            - { name: SOURCE_KEY, value: "${SOURCE_KEY}" }
+            - { name: SOURCE_HASH, value: "${SOURCE_HASH}" }
+            - { name: PROFILE_VERSION, value: "${PROFILE_VERSION}" }
+            - { name: API_URL, value: "${API_URL}" }
+            - { name: JOB_TOKEN_FILE, value: /var/run/secrets/ott/token }
+            - { name: SOURCE_ROOT, value: /data/source }
+            - { name: CONTENT_ROOT, value: /data/content }
+            - { name: WORK_DIR, value: /work }
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: "${WORK_SIZE}"
+            # 한도를 work와 같게 두면 /tmp·로그·쓰기 레이어 때문에 work가 차기 전에 Pod가 축출된다
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              ephemeral-storage: "${POD_DISK}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: tmp, mountPath: /tmp }
+            - { name: job-token, mountPath: /var/run/secrets/ott, readOnly: true }
+            - { name: source, mountPath: /data/source, readOnly: true }
+            - { name: content, mountPath: /data/content }
+      volumes:
+        # 원본 + 화질별 출력. 실측 약 1.24MB/초(658초 작품 출력 814MB) + 원본 크기
+        - name: work
+          emptyDir:
+            sizeLimit: "${WORK_SIZE}"
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: job-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: ott-api
+                  expirationSeconds: 3600
+                  path: token
+        # 로컬(kind) 저장소. PSS restricted는 hostPath를 막으므로 PVC로 받는다. AWS 단계에서는 S3로 바뀐다
+        - name: source
+          persistentVolumeClaim:
+            claimName: "${SOURCE_CLAIM}"
+            readOnly: true
+        - name: content
+          persistentVolumeClaim:
+            claimName: "${CONTENT_CLAIM}"

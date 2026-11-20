@@ -214,6 +214,7 @@ Cookie 갱신(`POST /api/playback/{sessionId}/refresh`):
 - API는 **작업 등록과 버전 할당만** 한다. Kubernetes Job을 만들 권한이 없다.
 - Kubernetes Job 생성은 운영자 CLI(`scripts/`)가 운영자 본인의 kubeconfig로 한다. 순서: admin API로 작업 등록 → 받은 jobId·버전으로 Job 템플릿 렌더링 → `kubectl create`.
 - 이렇게 나누면 API가 탈취돼도 클러스터에 임의의 워크로드를 띄울 수 없다.
+- 구현 (2026-11-20): `scripts/admin`의 `ott-admin`. Job 템플릿은 `deploy/jobs/transcode-job.yaml`(Git 소유)이고 CLI가 `string.Template`으로 채운다. 자리표시자 값은 YAML을 깨지 않도록 `[A-Za-z0-9._/:@-]`만 받는다. 로컬에서는 같은 작업을 `docker run`으로도 돌릴 수 있다(`--runner docker`).
 
 구현에서 정한 것 (결정: 2026-10-14):
 

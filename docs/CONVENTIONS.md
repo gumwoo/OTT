@@ -141,7 +141,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 
 ## 6. Python transcoder (PY)
 
-구조: `transcoder/src/transcoder/` src layout, `tests/`는 패키지 밖.
+구조: `transcoder/src/transcoder/` src layout, `tests/`는 패키지 밖. 운영자 CLI(`scripts/admin/`)도 같은 구조와 Ruff·mypy·pytest 설정을 쓴다 (PY-01~05, PY-10).
 
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
