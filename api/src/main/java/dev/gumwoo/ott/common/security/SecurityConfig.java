@@ -42,7 +42,8 @@ class SecurityConfig {
 			.securityContext(
 					(context) -> context.securityContextRepository(new RequestAttributeSecurityContextRepository()))
 			.requestCache((cache) -> cache.disable())
-			.addFilterBefore(new JobTokenAuthenticationFilter(verifier), AnonymousAuthenticationFilter.class)
+			.addFilterBefore(new JobTokenAuthenticationFilter(verifier, errorHandler),
+					AnonymousAuthenticationFilter.class)
 			.authorizeHttpRequests((authorize) -> authorize.anyRequest().hasRole("TRANSCODER"))
 			.exceptionHandling((exceptions) -> exceptions.authenticationEntryPoint(errorHandler)
 				.accessDeniedHandler(errorHandler));

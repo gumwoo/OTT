@@ -22,6 +22,7 @@ jobs:
       infra: ${{ steps.diff.outputs.infra }}
       scripts: ${{ steps.diff.outputs.scripts }}
       admin: ${{ steps.diff.outputs.admin }}
+      deploy: ${{ steps.diff.outputs.deploy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,6 +45,7 @@ jobs:
             done
             echo "scripts=$(has '(measure|media)')"
             echo "admin=$(has '(scripts/admin|deploy)')"
+            echo "deploy=$(has deploy)"
           } >> "$GITHUB_OUTPUT"
 
   api:
@@ -61,6 +63,8 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - run: ./gradlew check
+      # deploy/kind가 쓰는 이미지. 빌드가 깨지는 것만 잡는다 (push 안 함)
+      - run: docker build -t ott-api:ci .
       - name: coverage summary
         if: always()
         run: |
@@ -144,6 +148,21 @@ jobs:
             | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c \
               -strict -summary -kubernetes-version 1.35.0 -
 
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # K8-01·K8-08. helm은 러너 이미지에 들어 있는 것을 쓴다
+      - run: helm lint --strict deploy/charts/ott -f deploy/kind/values.yaml
+      - shell: bash
+        run: |
+          { helm template ott deploy/charts/ott -n ott -f deploy/kind/values.yaml; echo ---; cat deploy/kind/storage.yaml; } \
+            | docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c \
+              -strict -summary -kubernetes-version 1.35.0 -
+      - run: shellcheck deploy/kind/up.sh
+
   infra:
     needs: changes
     if: needs.changes.outputs.infra == 'true'
@@ -184,7 +203,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [changes, api, web, transcoder, admin, infra, scripts]
+    needs: [changes, api, web, transcoder, admin, deploy, infra, scripts]
     runs-on: ubuntu-24.04
     steps:
       - name: all required jobs passed or skipped
