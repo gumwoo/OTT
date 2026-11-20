@@ -3,17 +3,21 @@ package main
 
 import rego.v1
 
-pod_owners := {"Deployment", "StatefulSet", "DaemonSet", "Job"}
+pod_owners := {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"}
 
-name := sprintf("%s/%s", [input.kind, input.metadata.name])
+name := sprintf("%s/%s", [input.kind, object.get(input.metadata, "name", object.get(input.metadata, "generateName", "?"))])
 
 pod_spec := input.spec.template.spec if input.kind in pod_owners
 
 pod_spec := input.spec.jobTemplate.spec.template.spec if input.kind == "CronJob"
 
+pod_spec := input.spec if input.kind == "Pod"
+
 pod_labels := object.get(input.spec.template.metadata, "labels", {}) if input.kind in pod_owners
 
 pod_labels := object.get(input.spec.jobTemplate.spec.template.metadata, "labels", {}) if input.kind == "CronJob"
+
+pod_labels := object.get(input.metadata, "labels", {}) if input.kind == "Pod"
 
 job_spec := input.spec if input.kind == "Job"
 
@@ -65,14 +69,28 @@ deny contains msg if {
 	msg := sprintf("K8-03 %s volume %s: emptyDir sizeLimit is required", [name, v.name])
 }
 
-# K8-04: PSS restricted
-non_root(c) if pod_spec.securityContext.runAsNonRoot == true
+# K8-04: PSS restricted. 컨테이너 값이 있으면 Pod 값보다 우선한다
+container_or_pod(c, field) := c.securityContext[field]
 
-non_root(c) if c.securityContext.runAsNonRoot == true
+container_or_pod(c, field) := pod_spec.securityContext[field] if {
+	not field in object.keys(object.get(c, "securityContext", {}))
+}
 
-runtime_default(c) if pod_spec.securityContext.seccompProfile.type == "RuntimeDefault"
+non_root(c) if container_or_pod(c, "runAsNonRoot") == true
 
-runtime_default(c) if c.securityContext.seccompProfile.type == "RuntimeDefault"
+runtime_default(c) if container_or_pod(c, "seccompProfile").type == "RuntimeDefault"
+
+deny contains msg if {
+	some c in containers
+	c.securityContext.privileged == true
+	msg := sprintf("K8-04 %s container %s: privileged is not allowed", [name, c.name])
+}
+
+deny contains msg if {
+	some c in containers
+	container_or_pod(c, "runAsUser") == 0
+	msg := sprintf("K8-04 %s container %s: runAsUser 0 is not allowed", [name, c.name])
+}
 
 deny contains msg if {
 	some c in containers

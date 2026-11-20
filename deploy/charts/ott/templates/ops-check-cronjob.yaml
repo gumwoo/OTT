@@ -1,6 +1,5 @@
 {{- $api := .Values.api -}}
 {{- $ops := .Values.opsCheck -}}
-# design.md §10 1단계의 운영 CronJob. api 이미지를 웹 서버 없이 한 번 실행한다 (jobapi.OpsCheck)
 apiVersion: batch/v1
 kind: CronJob
 metadata:

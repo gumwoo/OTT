@@ -101,6 +101,24 @@ class OpsCheckIntegrationTests extends IntegrationTest {
 	}
 
 	@Test
+	void publishedAndSeedVersionsAreNeverDeleted() throws IOException {
+		TranscodeJob published = register();
+		this.jdbc.update(
+				"update transcode_jobs set status = 'PUBLISHED', updated_at = now() - interval '3 hours' where id = ?",
+				published.id());
+		Path seed = CONTENT_ROOT.resolve(this.contentId).resolve("v99");
+		for (Path dir : new Path[] { versionDir(published), seed }) {
+			Files.createDirectories(dir);
+			Files.write(dir.resolve("360p_00000.ts"), new byte[] { 0x47 });
+		}
+
+		this.opsCheck.check();
+
+		assertThat(versionDir(published)).isDirectory();
+		assertThat(seed).isDirectory();
+	}
+
+	@Test
 	void incompleteCurrentVersionIsReported() {
 		this.jdbc.update("update contents set current_version = 7 where id = ?", this.contentId);
 

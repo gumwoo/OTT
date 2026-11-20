@@ -49,8 +49,8 @@ Job 인증: transcoder → `/internal/jobs/{id}/heartbeat` → `JobTokenAuthenti
 
 검증한 것:
 
-- api `./gradlew check` 통과 (테스트 128개). `OpsCheckIntegrationTests`(LOST·NOT_STARTED·정리 대상·무결성), `OpsCheckModeTests`(웹 서버 없이 기동, 보안 빈 없음), `OpsCheckTests`, `LocalContentArtifactsTests`(삭제, root 밖 경로 거부)
-- conftest: 정책 단위 테스트 17개(규칙별 의도적 위반 16종), 차트 렌더링 128개, transcode Job 16개 통과. 렌더링에서 `component` 라벨을 지우고 `readOnlyRootFilesystem`을 false로 바꾸면 4건 FAIL, 종료 코드 1
+- api `./gradlew check` 통과 (테스트 130개). `OpsCheckIntegrationTests`(LOST·NOT_STARTED·정리 대상·무결성), `OpsCheckModeTests`(웹 서버 없이 기동, 보안 빈 없음), `OpsCheckTests`, `LocalContentArtifactsTests`(삭제, root 밖 경로 거부)
+- conftest: 정책 단위 테스트, 차트 렌더링(CI는 `storage.yaml`까지 붙여 검사), transcode Job 매니페스트 통과(개수는 harness-verification.md). 렌더링에서 `component` 라벨을 지우고 `readOnlyRootFilesystem`을 false로 바꾸면 4건 FAIL, 종료 코드 1
 - kind(`kindest/node:v1.35.8`), 모두 UTC:
 
 | 시나리오 | 주입 | 결과 |
@@ -63,13 +63,15 @@ Job 인증: transcoder → `/internal/jobs/{id}/heartbeat` → `JobTokenAuthenti
 | `activeDeadlineSeconds` 60초 | Job 생성 08:17:29 무렵 | Job 조건 `DeadlineExceeded`, 08:18:33 Job이 `FAILED(TERMINATED)` 보고 |
 | 디스크 한도 | `--work-size 64Mi --pod-disk 128Mi`, 08:18:50 시작 | 08:20:23 `Evicted: Usage of EmptyDir volume "work" exceeds the limit "64Mi"`, 3초 뒤 exit 137. 보고 없음 → 08:23:09 `LOST` |
 
-- 디스크 한도: design.md §4의 [가설](ENOSPC보다 eviction이 먼저)이 맞았다. 축출된 Pod에 `DisruptionTarget` 조건은 없었다
+- 디스크 한도: emptyDir `sizeLimit` 초과는 ENOSPC가 아니라 eviction이었다(design.md §4 [가설]의 이 경우). 컨테이너 `ephemeral-storage` limit 초과(emptyDir 한도보다 Pod 한도가 먼저 차는 경우)는 시험하지 않았다. 축출된 Pod에 `DisruptionTarget` 조건은 없었다
 - Job 인증·RBAC·selector 확인은 #37 기록(PR 본문)과 TS-0008에 있다
 
 검증하지 못한 것:
 
 - deadline 초과와 수동 Pod 삭제는 DB에서 둘 다 `TERMINATED`·"received SIGTERM"으로 남아 구분되지 않는다. 구분은 Kubernetes Job 조건으로만 되고, Job은 `ttlSecondsAfterFinished`(24시간) 뒤 지워진다
 - 디스크 한도 초과는 `LOST`로만 남는다. `DISK_FULL`로 남기려면 Job이 자체 예산으로 점검해야 한다(하지 않음)
+- 운영 CronJob도 서명 개인키 Secret을 마운트한다. `PlaybackConfig` 기동 검사 때문이고 키를 쓰지는 않는다. AWS 단계 전에 줄일지 정한다
+- transcode Job의 `--deadline`이 `cleanupAfter`(2시간)보다 길면 아직 쓰는 중인 폴더를 지울 수 있다. 지금은 CLI가 막지 않는다(기본 1시간)
 - 업로드 도중 Pod 삭제(E9 ②), 노드 종료·drain(③)은 하지 않았다. 단일 노드 kind라 노드 종료는 EKS 단계에서 한다
 - `LOST` 확정과 heartbeat가 동시에 들어오는 경쟁은 테스트하지 않았다
 - #37 첫 실행에서 api가 liveness probe(1초)에 응답하지 못해 재시작된 일이 한 번 있었다. 다시 재현되지 않았고 원인은 확인하지 못했다(Docker Desktop VM 메모리 부족 의심: swap 2GB 중 1.6~1.7GB 사용)
@@ -80,3 +82,4 @@ Job 인증: transcoder → `/internal/jobs/{id}/heartbeat` → `JobTokenAuthenti
 - AWS 단계(design.md 0~4단계): S3 `ContentArtifacts` 구현(삭제 포함), EKS에서 TokenReview·IRSA/Pod Identity, E9 나머지 시나리오
 - 운영 CronJob 실패(종료 코드 1)를 알람으로 연결하는 일
 - 디스크 예산 자체 점검으로 `DISK_FULL` 보고 여부 판단
+- S3 단계: 이미 지운 FAILED 버전도 매번 정리 대상으로 다시 조회한다. 로컬은 폴더 확인 한 번이라 무해하지만 S3에서는 정리 기록(예: `cleaned_at`)을 둘지 정한다

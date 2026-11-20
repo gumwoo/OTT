@@ -101,6 +101,26 @@ test_k8_04_seccomp if {
 	denied(json.remove(job, ["spec/template/spec/securityContext/seccompProfile"]), "K8-04")
 }
 
+test_k8_04_container_cannot_override_pod if {
+	denied(with_container(job, json.patch(container, [{"op": "add", "path": "/securityContext/runAsNonRoot", "value": false}])), "K8-04")
+	denied(with_container(job, json.patch(container, [{"op": "add", "path": "/securityContext/seccompProfile", "value": {"type": "Unconfined"}}])), "K8-04")
+}
+
+test_k8_04_privileged_and_root if {
+	denied(with_container(job, json.patch(container, [{"op": "add", "path": "/securityContext/privileged", "value": true}])), "K8-04")
+	denied(with_container(job, json.patch(container, [{"op": "add", "path": "/securityContext/runAsUser", "value": 0}])), "K8-04")
+}
+
+test_bare_pod_with_generate_name_is_checked if {
+	privileged := json.patch(container, [{"op": "add", "path": "/securityContext/privileged", "value": true}])
+	bare := {
+		"kind": "Pod",
+		"metadata": {"generateName": "x-", "labels": {"app.kubernetes.io/component": "x"}},
+		"spec": json.patch(pod.spec, [{"op": "replace", "path": "/containers/0", "value": privileged}]),
+	}
+	denied(bare, "K8-04")
+}
+
 test_k8_06_backoff_limit if {
 	denied(json.patch(job, [{"op": "replace", "path": "/spec/backoffLimit", "value": 6}]), "K8-06")
 }

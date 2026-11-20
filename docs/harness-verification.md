@@ -53,9 +53,9 @@ K8-02·03·04·06·07·09를 conftest v0.71.1 정책(`deploy/policy/k8s.rego`)�
 
 | 확인 | 결과 |
 |---|---|
-| `conftest verify -p deploy/policy` (규칙별로 일부러 어긴 입력 16종 + 정상 입력) | 17 passed |
-| `helm template`(kind values) 출력 | 128 passed |
-| 운영자 CLI가 그린 transcode Job 매니페스트 | 16 passed |
+| `conftest verify -p deploy/policy` (규칙별로 일부러 어긴 입력 + 정상 입력. 컨테이너가 Pod 설정을 덮는 경우, privileged, root, 단독 Pod 포함) | 20 passed |
+| `helm template`(kind values) + `deploy/kind/storage.yaml` (CI와 같은 입력) | 216 passed |
+| 운영자 CLI가 그린 transcode Job 매니페스트 | 18 passed |
 | 렌더링 결과에서 `component: api` 라벨을 지우고 `readOnlyRootFilesystem`을 false로 바꿈 | K8-02 2건, K8-04 2건 FAIL, 종료 코드 1 |
 
 ## 아직 확인하지 않은 것

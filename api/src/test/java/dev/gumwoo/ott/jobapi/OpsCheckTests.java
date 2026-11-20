@@ -21,7 +21,7 @@ class OpsCheckTests {
 
 	private final ContentArtifacts artifacts = mock(ContentArtifacts.class);
 
-	// kind에서 transcoder(uid 999)가 만든 폴더를 다른 uid가 지우지 못해 점검 전체가 멈췄다
+	// TS-0009
 	@Test
 	void oneUndeletableVersionDoesNotStopTheRestAndFailsTheRun() {
 		TranscodeJob locked = failed("locked", 1);
@@ -34,11 +34,30 @@ class OpsCheckTests {
 		OpsCheck opsCheck = new OpsCheck(this.jobs, this.artifacts,
 				new OpsCheckProperties(true, Duration.ofMinutes(2), Duration.ofMinutes(10), Duration.ofHours(2)));
 
+		OpsCheck.Result result = opsCheck.check();
 		opsCheck.run(null);
 
-		assertThat(opsCheck.check().cleanupFailed()).containsExactly(locked);
-		assertThat(opsCheck.check().deleted()).containsExactly(free);
+		assertThat(result.cleanupFailed()).containsExactly(locked);
+		assertThat(result.deleted()).containsExactly(free);
 		assertThat(opsCheck.getExitCode()).isEqualTo(1);
+	}
+
+	@Test
+	void unreadableCurrentVersionIsIncompleteAndCleanupStillRuns() {
+		TranscodeJob free = failed("free", 1);
+		given(this.jobs.currentVersions()).willReturn(List.of(new TranscodeJobService.ContentVersion("broken", 3)));
+		willThrow(new UncheckedIOException(new AccessDeniedException("/data/content/broken/v3/master.m3u8")))
+			.given(this.artifacts)
+			.problems("broken", 3);
+		given(this.jobs.cleanupCandidates(any())).willReturn(List.of(free));
+		given(this.artifacts.delete("free", 1)).willReturn(true);
+		OpsCheck opsCheck = new OpsCheck(this.jobs, this.artifacts,
+				new OpsCheckProperties(true, Duration.ofMinutes(2), Duration.ofMinutes(10), Duration.ofHours(2)));
+
+		OpsCheck.Result result = opsCheck.check();
+
+		assertThat(result.incomplete()).containsExactly(new TranscodeJobService.ContentVersion("broken", 3));
+		assertThat(result.deleted()).containsExactly(free);
 	}
 
 	private static TranscodeJob failed(String contentId, int version) {

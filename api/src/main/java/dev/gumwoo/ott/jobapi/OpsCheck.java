@@ -53,7 +53,13 @@ class OpsCheck implements ApplicationRunner, ExitCodeGenerator {
 				job.version(), job.error()));
 		List<TranscodeJobService.ContentVersion> incomplete = new ArrayList<>();
 		for (TranscodeJobService.ContentVersion current : this.jobs.currentVersions()) {
-			List<String> problems = this.artifacts.problems(current.contentId(), current.version());
+			List<String> problems;
+			try {
+				problems = this.artifacts.problems(current.contentId(), current.version());
+			}
+			catch (RuntimeException ex) {
+				problems = List.of("unreadable: " + ex.getMessage());
+			}
 			if (!problems.isEmpty()) {
 				incomplete.add(current);
 				log.error("Current version {} v{} is incomplete: {}", current.contentId(), current.version(), problems);
@@ -62,7 +68,6 @@ class OpsCheck implements ApplicationRunner, ExitCodeGenerator {
 		List<TranscodeJob> deleted = new ArrayList<>();
 		List<TranscodeJob> cleanupFailed = new ArrayList<>();
 		for (TranscodeJob job : this.jobs.cleanupCandidates(this.properties.cleanupAfter())) {
-			// 한 버전을 못 지워도 나머지는 계속 정리하고, 실패는 종료 코드로 남긴다
 			try {
 				if (this.artifacts.delete(job.contentId(), job.version())) {
 					deleted.add(job);

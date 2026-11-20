@@ -8,17 +8,16 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.csrf.CsrfException;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 
 // 필터 단계 401·403도 advice로 보내 같은 ProblemDetail 형식을 쓴다 (app-design.md §5)
-// 운영 CronJob(웹 서버 없음)에서는 쓰지 않는다
 @Component
 @ConditionalOnWebApplication
 class SecurityErrorHandler implements AuthenticationEntryPoint, AccessDeniedHandler {

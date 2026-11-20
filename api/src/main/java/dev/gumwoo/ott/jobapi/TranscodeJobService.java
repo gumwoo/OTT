@@ -190,7 +190,7 @@ public class TranscodeJobService {
 			.list();
 	}
 
-	// FAILED로 확정되고 cleanupAfter가 지난 작업만. FAILED 작업의 버전은 공개된 적이 없지만 현재 포인터와 한 번 더 비교한다
+	// FAILED 작업의 버전은 공개된 적이 없다. 그래도 현재 포인터와 한 번 더 비교한다
 	@Transactional(readOnly = true)
 	public List<TranscodeJob> cleanupCandidates(Duration cleanupAfter) {
 		return this.jdbc.sql("""
