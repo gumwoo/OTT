@@ -173,14 +173,14 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | ID | 규칙 | 근거 | 강제 | 시점 |
 |---|---|---|---|---|
 | K8-01 | Helm 권장 라벨(`app.kubernetes.io/name`, `instance`, `managed-by`, `helm.sh/chart`) | 공식(Helm) | `helm lint --strict` | P |
-| K8-02 | **`app.kubernetes.io/component` 필수**, Service·PDB selector에 `component` 포함 | 설계(발견 #11 예방) | conftest 또는 kube-linter 커스텀 규칙 | P |
-| K8-03 | 모든 컨테이너에 requests·limits. Job은 `ephemeral-storage` + emptyDir `sizeLimit` | 공식 | kube-linter | P |
-| K8-04 | securityContext: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true` | 공식(PSS Restricted), 커뮤니티(Bitnami) | 네임스페이스 `pod-security.kubernetes.io/enforce=restricted` + kube-linter | P |
+| K8-02 | **`app.kubernetes.io/component` 필수**, Service·PDB selector에 `component` 포함 | 설계(발견 #11 예방) | conftest (`deploy/policy`) | P |
+| K8-03 | 모든 컨테이너에 requests·limits. Job은 `ephemeral-storage` + emptyDir `sizeLimit` | 공식 | conftest (`deploy/policy`) | P |
+| K8-04 | securityContext: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true` | 공식(PSS Restricted), 커뮤니티(Bitnami) | 네임스페이스 `pod-security.kubernetes.io/enforce=restricted` + conftest (`deploy/policy`) | P |
 | K8-05 | liveness·readiness probe는 DB 같은 외부 의존성을 확인하지 않는다 | 공식(Actuator, EKS BP) | 리뷰 + 프로브 테스트 | P |
 | K8-06 | Job: `restartPolicy: Never`, `backoffLimit: 0`, `activeDeadlineSeconds`, `ttlSecondsAfterFinished` 필수 | 공식(Job) | conftest | P |
 | K8-07 | CronJob: `concurrencyPolicy: Forbid`, `startingDeadlineSeconds` | 공식(CronJob) | conftest | P |
 | K8-08 | 매니페스트 스키마 검사 (CRD 포함) | 기여자(kubeconform) | `helm template | kubeconform -strict` | P |
-| K8-09 | Argo CD 추적 방식은 `annotation`으로 명시. CLI로 만드는 Job에는 Argo 추적 annotation을 넣지 않는다 | 공식(Argo CD) | `argocd-cm` 설정 + 리뷰 | D |
+| K8-09 | Argo CD 추적 방식은 `annotation`으로 명시. CLI로 만드는 Job에는 Argo 추적 annotation을 넣지 않는다 | 공식(Argo CD) | `argocd-cm` 설정 + 리뷰, Job annotation은 conftest | D |
 
 ## 9. GitHub Actions (GA)
 
