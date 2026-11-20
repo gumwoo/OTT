@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ott
+description: OTT api와 Job 실행에 필요한 계정·권한
+type: application
+version: 0.1.0
+appVersion: "0.0.1"

@@ -135,6 +135,7 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
 | CSRF 토큰 없음·불일치 | `AccessDeniedHandler` (`CsrfException` 계열 판별) | 403 `CSRF_INVALID` |
 | 권한 없음 (ADMIN 전용 등) | `AccessDeniedHandler` | 403 `FORBIDDEN` |
 | 구독 등급 부족 | 서비스 예외 → advice | 403 `PLAN_REQUIRED` |
+| `/internal/*`: TokenReview 호출·응답 해석 실패 | `JobTokenAuthenticationFilter` → advice | 503 `TOKEN_REVIEW_UNAVAILABLE` (Job은 5xx를 재시도한다, §8) |
 
 세 경로 모두 §6의 ProblemDetail 형식으로 응답한다.
 
@@ -253,7 +254,10 @@ publish 응답:
   - 로컬 구현은 `ott.content.local-root`(local 프로필 `../.local/content`)를 읽는다. 설정이 없으면 기동을 실패시킨다. S3 구현은 AWS 단계에서 붙인다.
 - 인증은 ServiceAccount 토큰 + TokenReview. 인증 로직은 인터페이스로 두고, `local` 프로필에서만 고정 개발용 토큰 구현으로 바꾼다.
 - **운영에서 개발용 구현이 켜지지 않게** 막는다. 개발용 토큰은 `local`·`test` 프로필에서만 쓸 수 있고, 그 밖의 프로필에서 개발용 토큰 설정이 감지되면 기동을 실패시킨다.
-  - 구현: `/internal/**`은 별도 `SecurityFilterChain`(STATELESS, CSRF 없음)이고 `Authorization: Bearer`만 본다. 세션 쿠키로는 들어올 수 없다. 개발용 토큰은 `ott.internal.dev-token`이고 `local`·`test` 프로필에서만 허용한다. 검증기가 없으면(TokenReview 구현 전) `/internal/*`은 모두 401이다.
+  - 구현: `/internal/**`은 별도 `SecurityFilterChain`(STATELESS, CSRF 없음)이고 `Authorization: Bearer`만 본다. 세션 쿠키로는 들어올 수 없다. 개발용 토큰은 `ott.internal.dev-token`이고 `local`·`test` 프로필에서만 허용한다.
+  - TokenReview (결정: 2026-11-20): `ott.internal.token-review.enabled=true`면 Job 토큰을 `POST /apis/authentication.k8s.io/v1/tokenreviews`(audience `ott-api`)로 확인한다. 인증됨, 응답 audiences에 `ott-api` 포함, 주체가 `ott.internal.token-review.service-account`(`system:serviceaccount:<ns>:transcoder`)일 때만 통과한다. api ServiceAccount에는 `tokenreviews create`만 준다(`deploy/charts/ott`).
+  - 토큰이 틀리면 401 `UNAUTHENTICATED`, TokenReview 호출·해석이 실패하면 503 `TOKEN_REVIEW_UNAVAILABLE`. 빈 토큰은 API 서버가 400으로 거절하므로 호출하지 않고 401로 거부한다.
+  - 기동 조건: 개발용 토큰과 TokenReview를 함께 켜면 실패. `local`·`test`가 아닌 프로필에서 둘 다 없으면 실패. `local`·`test`에서 둘 다 없으면 `/internal/*`을 모두 401로 막고 경고만 남긴다.
 
 ### 오류 응답 형식 (결정: 2026-10-13)
 

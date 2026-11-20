@@ -40,8 +40,12 @@ class SecurityErrorHandler implements AuthenticationEntryPoint, AccessDeniedHand
 	}
 
 	private void write(HttpServletRequest request, HttpServletResponse response, ErrorCode code) throws IOException {
-		if (this.resolver.resolveException(request, response, null, new ApiException(code)) == null) {
-			response.sendError(code.status().value());
+		write(request, response, new ApiException(code));
+	}
+
+	void write(HttpServletRequest request, HttpServletResponse response, ApiException exception) throws IOException {
+		if (this.resolver.resolveException(request, response, null, exception) == null) {
+			response.sendError(exception.code().status().value());
 		}
 	}
 

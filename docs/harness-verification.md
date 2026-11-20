@@ -49,6 +49,6 @@ CONVENTIONS §11. 규칙을 일부러 어긴 코드로 검사가 실제로 막�
 
 ## 아직 확인하지 않은 것
 
-- K8-02 등 매니페스트 검사: `deploy/` 차트가 아직 없다. kind 단계에서 차트와 함께 건다.
+- K8-02·03·04·06·07 정책 검사(conftest·kube-linter): 차트(`deploy/charts/ott`)는 들어왔고 CI는 `helm lint --strict`와 kubeconform만 돈다. 정책 검사는 kind 단계의 다음 PR에서 의도적 위반으로 막히는지 확인하며 건다.
 - FE-09(hls.js), FE-12(Testing Library·Playwright): 플레이어를 옮기는 web 단계에서 건다.
 - CI에서의 실행: 이 기록은 로컬 결과다. GitHub Actions 결과는 첫 PR에서 확인한다.

@@ -1,0 +1,32 @@
+api:
+  replicas: 1
+  image:
+    repository: ott-api
+    tag: local
+    pullPolicy: IfNotPresent
+  database:
+    url: ""
+    # username·password 키를 가진 Secret
+    secret: ott-db
+  playback:
+    resourceBaseUrl: ""
+    keyPairId: ""
+    # private-key.pem 키를 가진 Secret (PKCS#8)
+    signingSecret: ott-signing
+  # 로컬 저장소 구현(kind)에서 publish 검증이 읽는 content PVC. AWS 단계에서는 S3로 바뀐다
+  contentClaim: ott-content
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+      ephemeral-storage: 256Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+      ephemeral-storage: 512Mi
+
+transcoder:
+  # deploy/jobs/transcode-job.yaml의 serviceAccountName과 같아야 한다
+  serviceAccount: transcoder
+  # deploy/jobs/transcode-job.yaml의 projected 토큰 audience와 같아야 한다
+  tokenAudience: ott-api

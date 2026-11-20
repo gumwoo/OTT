@@ -1,0 +1,95 @@
+{{- $api := .Values.api -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ott.api.name" . }}
+  labels:
+    {{- include "ott.labels" . | nindent 4 }}
+    {{- include "ott.api.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ $api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ott.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ott.labels" . | nindent 8 }}
+        {{- include "ott.api.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "ott.api.name" . }}
+      # TokenReview를 호출할 때 api 자신의 토큰과 CA가 필요하다
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: "{{ $api.image.repository }}:{{ $api.image.tag }}"
+          imagePullPolicy: {{ $api.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: {{ required "api.database.url is required" $api.database.url | quote }}
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef: { name: {{ $api.database.secret }}, key: username }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $api.database.secret }}, key: password }
+            - name: OTT_PLAYBACK_RESOURCE_BASE_URL
+              value: {{ required "api.playback.resourceBaseUrl is required" $api.playback.resourceBaseUrl | quote }}
+            - name: OTT_PLAYBACK_SIGNING_KEY_PAIR_ID
+              value: {{ required "api.playback.keyPairId is required" $api.playback.keyPairId | quote }}
+            - name: OTT_PLAYBACK_SIGNING_PRIVATE_KEY
+              value: file:/var/run/secrets/ott-signing/private-key.pem
+            - name: OTT_CONTENT_LOCAL_ROOT
+              value: /data/content
+            - name: OTT_INTERNAL_TOKEN_REVIEW_ENABLED
+              value: "true"
+            - name: OTT_INTERNAL_TOKEN_REVIEW_AUDIENCE
+              value: {{ .Values.transcoder.tokenAudience | quote }}
+            - name: OTT_INTERNAL_TOKEN_REVIEW_SERVICE_ACCOUNT
+              value: "system:serviceaccount:{{ .Release.Namespace }}:{{ .Values.transcoder.serviceAccount }}"
+            - name: SPRING_SSL_BUNDLE_PEM_KUBERNETES_TRUSTSTORE_CERTIFICATE
+              value: file:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+          resources:
+            {{- toYaml $api.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # K8-05: liveness·readiness 그룹은 DB를 보지 않는다 (Boot 기본)
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: signing, mountPath: /var/run/secrets/ott-signing, readOnly: true }
+            - { name: content, mountPath: /data/content, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: signing
+          secret:
+            secretName: {{ $api.playback.signingSecret }}
+        - name: content
+          persistentVolumeClaim:
+            claimName: {{ $api.contentClaim }}
+            readOnly: true

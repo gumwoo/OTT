@@ -1,0 +1,28 @@
+# system:auth-delegator는 subjectaccessreviews까지 주므로 tokenreviews create만 따로 만든다
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "ott.api.name" . }}-token-review
+  labels:
+    {{- include "ott.labels" . | nindent 4 }}
+    {{- include "ott.api.selectorLabels" . | nindent 4 }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "ott.api.name" . }}-token-review
+  labels:
+    {{- include "ott.labels" . | nindent 4 }}
+    {{- include "ott.api.selectorLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ include "ott.api.name" . }}-token-review
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ott.api.name" . }}
+    namespace: {{ .Release.Namespace }}
