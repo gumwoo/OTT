@@ -30,8 +30,8 @@ spec:
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
+            runAsUser: {{ $ops.runAsUser }}
+            runAsGroup: {{ $ops.runAsUser }}
             seccompProfile:
               type: RuntimeDefault
           containers:

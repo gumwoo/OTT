@@ -33,6 +33,9 @@ opsCheck:
   startDeadline: 10m
   # transcode Job의 activeDeadlineSeconds(ott-admin --deadline, 기본 3600)보다 길어야 한다
   cleanupAfter: 2h
+  # 로컬 hostPath에는 파일 소유자가 남는다. transcoder(uid 999)가 만든 버전 폴더(755)를 지우려면 같은 uid여야 한다.
+  # S3로 바뀌면 의미가 없다
+  runAsUser: 999
   resources:
     requests:
       cpu: 250m

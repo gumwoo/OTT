@@ -35,7 +35,8 @@ class OpsCheck implements ApplicationRunner, ExitCodeGenerator {
 
 	@Override
 	public void run(ApplicationArguments args) {
-		this.exitCode = check().incomplete().isEmpty() ? 0 : 1;
+		Result result = check();
+		this.exitCode = (result.incomplete().isEmpty() && result.cleanupFailed().isEmpty()) ? 0 : 1;
 	}
 
 	@Override
@@ -59,20 +60,30 @@ class OpsCheck implements ApplicationRunner, ExitCodeGenerator {
 			}
 		}
 		List<TranscodeJob> deleted = new ArrayList<>();
+		List<TranscodeJob> cleanupFailed = new ArrayList<>();
 		for (TranscodeJob job : this.jobs.cleanupCandidates(this.properties.cleanupAfter())) {
-			if (this.artifacts.delete(job.contentId(), job.version())) {
-				deleted.add(job);
-				log.info("Deleted unfinished version {} v{} (job {} {})", job.contentId(), job.version(), job.id(),
-						job.failureCode());
+			// 한 버전을 못 지워도 나머지는 계속 정리하고, 실패는 종료 코드로 남긴다
+			try {
+				if (this.artifacts.delete(job.contentId(), job.version())) {
+					deleted.add(job);
+					log.info("Deleted unfinished version {} v{} (job {} {})", job.contentId(), job.version(), job.id(),
+							job.failureCode());
+				}
+			}
+			catch (RuntimeException ex) {
+				cleanupFailed.add(job);
+				log.error("Could not delete unfinished version {} v{} (job {})", job.contentId(), job.version(),
+						job.id(), ex);
 			}
 		}
-		log.info("Ops check finished: lost={}, notStarted={}, incomplete={}, deleted={}", lost.size(),
-				notStarted.size(), incomplete.size(), deleted.size());
-		return new Result(lost, notStarted, incomplete, deleted);
+		log.info("Ops check finished: lost={}, notStarted={}, incomplete={}, deleted={}, cleanupFailed={}", lost.size(),
+				notStarted.size(), incomplete.size(), deleted.size(), cleanupFailed.size());
+		return new Result(lost, notStarted, incomplete, deleted, cleanupFailed);
 	}
 
 	record Result(List<TranscodeJob> lost, List<TranscodeJob> notStarted,
-			List<TranscodeJobService.ContentVersion> incomplete, List<TranscodeJob> deleted) {
+			List<TranscodeJobService.ContentVersion> incomplete, List<TranscodeJob> deleted,
+			List<TranscodeJob> cleanupFailed) {
 	}
 
 }
