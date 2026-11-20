@@ -6,8 +6,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import dev.gumwoo.ott.jobapi.ContentArtifacts;
 
@@ -62,6 +64,24 @@ public class LocalContentArtifacts implements ContentArtifacts {
 			}
 		}
 		return problems;
+	}
+
+	@Override
+	public boolean delete(String contentId, int version) {
+		Path root = this.root.toAbsolutePath().normalize();
+		Path dir = root.resolve(contentId).resolve("v" + version).normalize();
+		if (!dir.startsWith(root) || dir.equals(root) || !Files.isDirectory(dir)) {
+			return false;
+		}
+		try (Stream<Path> paths = Files.walk(dir)) {
+			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+				Files.delete(path);
+			}
+		}
+		catch (IOException ex) {
+			throw new UncheckedIOException(ex);
+		}
+		return true;
 	}
 
 	private static List<String> urisAfter(List<String> lines, String tag) {

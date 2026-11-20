@@ -25,6 +25,24 @@ api:
       memory: 768Mi
       ephemeral-storage: 512Mi
 
+opsCheck:
+  schedule: "*/5 * * * *"
+  # heartbeat 주기(transcoder 기본 15초)의 여러 배
+  lostAfter: 2m
+  # 이미지 pull과 노드 확장 시간을 포함한다
+  startDeadline: 10m
+  # transcode Job의 activeDeadlineSeconds(ott-admin --deadline, 기본 3600)보다 길어야 한다
+  cleanupAfter: 2h
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+      ephemeral-storage: 64Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+      ephemeral-storage: 256Mi
+
 transcoder:
   # deploy/jobs/transcode-job.yaml의 serviceAccountName과 같아야 한다
   serviceAccount: transcoder

@@ -34,22 +34,7 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: SPRING_DATASOURCE_URL
-              value: {{ required "api.database.url is required" $api.database.url | quote }}
-            - name: SPRING_DATASOURCE_USERNAME
-              valueFrom:
-                secretKeyRef: { name: {{ $api.database.secret }}, key: username }
-            - name: SPRING_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: {{ $api.database.secret }}, key: password }
-            - name: OTT_PLAYBACK_RESOURCE_BASE_URL
-              value: {{ required "api.playback.resourceBaseUrl is required" $api.playback.resourceBaseUrl | quote }}
-            - name: OTT_PLAYBACK_SIGNING_KEY_PAIR_ID
-              value: {{ required "api.playback.keyPairId is required" $api.playback.keyPairId | quote }}
-            - name: OTT_PLAYBACK_SIGNING_PRIVATE_KEY
-              value: file:/var/run/secrets/ott-signing/private-key.pem
-            - name: OTT_CONTENT_LOCAL_ROOT
-              value: /data/content
+            {{- include "ott.api.commonEnv" . | nindent 12 }}
             - name: OTT_INTERNAL_TOKEN_REVIEW_ENABLED
               value: "true"
             - name: OTT_INTERNAL_TOKEN_REVIEW_AUDIENCE

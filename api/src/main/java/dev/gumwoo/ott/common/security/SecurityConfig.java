@@ -3,6 +3,7 @@ package dev.gumwoo.ott.common.security;
 import java.util.List;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
@@ -32,8 +33,10 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 class SecurityConfig {
 
 	// Job은 쿠키 없이 Bearer 토큰만 쓴다. 세션 쿠키로는 /internal/*에 들어올 수 없다 (design.md §4)
+	// 운영 CronJob(웹 서버 없음)에는 HttpSecurity가 없다
 	@Bean
 	@Order(1)
+	@ConditionalOnWebApplication
 	SecurityFilterChain internalFilterChain(HttpSecurity http, JobTokenVerifier verifier,
 			SecurityErrorHandler errorHandler) {
 		http.securityMatcher("/internal/**")
@@ -51,6 +54,7 @@ class SecurityConfig {
 	}
 
 	@Bean
+	@ConditionalOnWebApplication
 	SecurityFilterChain apiFilterChain(HttpSecurity http, CookieCsrfTokenRepository csrfTokenRepository,
 			SecurityContextRepository securityContextRepository, SecurityErrorHandler errorHandler) {
 		// spa()가 저장소를 덮어쓰므로 그 뒤에 지정한다

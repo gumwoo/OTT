@@ -3,7 +3,9 @@ package dev.gumwoo.ott.jobapi;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import dev.gumwoo.ott.common.error.ApiException;
@@ -157,6 +159,48 @@ public class TranscodeJobService {
 			.single();
 	}
 
+	// 조건을 UPDATE 안에서 다시 평가하므로, 같은 순간 들어온 heartbeat가 먼저 커밋되면 그 작업은 건드리지 않는다
+	@Transactional
+	public List<TranscodeJob> failLost(Duration lostAfter) {
+		return this.jdbc.sql("""
+				update transcode_jobs
+				set status = 'FAILED', failure_code = 'LOST', updated_at = now(),
+				    error = 'no heartbeat since ' || coalesce(heartbeat_at, started_at, created_at)
+				where status in ('RUNNING', 'VALIDATED', 'UPLOADED')
+				  and coalesce(heartbeat_at, started_at, created_at) < now() - ? * interval '1 second'
+				returning *
+				""").param(lostAfter.toSeconds()).query(TranscodeJobService::job).list();
+	}
+
+	@Transactional
+	public List<TranscodeJob> failNotStarted(Duration startDeadline) {
+		return this.jdbc.sql("""
+				update transcode_jobs
+				set status = 'FAILED', failure_code = 'NOT_STARTED', updated_at = now(),
+				    error = 'not started since ' || created_at
+				where status = 'REQUESTED' and created_at < now() - ? * interval '1 second'
+				returning *
+				""").param(startDeadline.toSeconds()).query(TranscodeJobService::job).list();
+	}
+
+	@Transactional(readOnly = true)
+	public List<ContentVersion> currentVersions() {
+		return this.jdbc.sql("select id, current_version from contents where current_version is not null order by id")
+			.query((rs, row) -> new ContentVersion(rs.getString("id"), rs.getInt("current_version")))
+			.list();
+	}
+
+	// FAILED로 확정되고 cleanupAfter가 지난 작업만. FAILED 작업의 버전은 공개된 적이 없지만 현재 포인터와 한 번 더 비교한다
+	@Transactional(readOnly = true)
+	public List<TranscodeJob> cleanupCandidates(Duration cleanupAfter) {
+		return this.jdbc.sql("""
+				select j.* from transcode_jobs j join contents c on c.id = j.content_id
+				where j.status = 'FAILED' and j.updated_at < now() - ? * interval '1 second'
+				  and j.version is distinct from c.current_version
+				order by j.updated_at
+				""").param(cleanupAfter.toSeconds()).query(TranscodeJobService::job).list();
+	}
+
 	private static SupersededReason supersededReason(TranscodeJob job, ContentPointer content) {
 		if (job.publishEpoch() != content.publishEpoch()) {
 			return SupersededReason.STALE_EPOCH;
@@ -229,6 +273,9 @@ public class TranscodeJobService {
 	private static Instant instant(ResultSet rs, String column) throws SQLException {
 		Timestamp timestamp = rs.getTimestamp(column);
 		return (timestamp != null) ? timestamp.toInstant() : null;
+	}
+
+	public record ContentVersion(String contentId, int version) {
 	}
 
 	private record ContentPointer(Integer currentVersion, Integer maxPublishedVersion, int publishEpoch,

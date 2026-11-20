@@ -25,6 +25,31 @@ class LocalContentArtifactsTests {
 	}
 
 	@Test
+	void deleteRemovesOnlyThatVersion() throws IOException {
+		Path doomed = version("movie", 2);
+		Files.createDirectories(doomed.resolve("nested"));
+		Files.write(doomed.resolve("nested").resolve("seg0.ts"), new byte[] { 1 });
+		Path kept = version("movie", 1);
+
+		LocalContentArtifacts artifacts = new LocalContentArtifacts(this.root);
+
+		assertThat(artifacts.delete("movie", 2)).isTrue();
+		assertThat(doomed).doesNotExist();
+		assertThat(kept).isDirectory();
+		assertThat(artifacts.delete("movie", 2)).isFalse();
+	}
+
+	@Test
+	void deleteDoesNotLeaveTheRoot() throws IOException {
+		Path outside = this.root.resolveSibling(this.root.getFileName() + "-outside").resolve("v1");
+		Files.createDirectories(outside);
+
+		assertThat(new LocalContentArtifacts(this.root).delete("../" + this.root.getFileName() + "-outside", 1))
+			.isFalse();
+		assertThat(outside).isDirectory();
+	}
+
+	@Test
 	void missingMasterIsReported() {
 		assertThat(new LocalContentArtifacts(this.root).problems("movie", 9)).containsExactly("missing master.m3u8");
 	}
