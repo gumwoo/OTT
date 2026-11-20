@@ -235,7 +235,7 @@ S3 업로드는 성공했는데 응답이 유실되면 boto3가 자동 재시도
 - 필요량 산정: 원본 크기 + 화질별 출력 합계 + ffmpeg 임시 파일. 테스트 영상으로 실측해서 정한다.
 - **노드 디스크 크기**도 함께 정한다. Job의 요청량만 설정하면 노드 자체 공간이 부족해서 스케줄되지 않을 수 있다.
 - 디스크가 부족할 때 Job이 어떻게 실패하고 어떤 기록이 남는지는 E9에서 확인한다.
-- [가설] 디스크 사용량이 `ephemeral-storage` 한도를 넘으면 쓰기 오류(ENOSPC)보다 **Pod eviction이 먼저** 올 수 있다. 그러면 `DISK_FULL`이 보고되지 않고 heartbeat 끊김으로 `LOST`가 된다. 재현 테스트로 확인하고, 필요하면 Job이 한도보다 작은 자체 예산으로 디스크 여유를 사전·주기 점검하도록 한다.
+- [확인, kind v1.35.8] 작업 디렉터리가 emptyDir `sizeLimit`을 넘으면 쓰기 오류(ENOSPC)가 아니라 **Pod eviction**이 온다. kubelet이 `Usage of EmptyDir volume "work" exceeds the limit`으로 축출했고, 컨테이너는 3초 뒤 exit 137로 끝났다. transcoder는 `DISK_FULL`도 `TERMINATED`도 보고하지 못했고 운영 CronJob이 `LOST`로 확정했다 (docs/impl/06). 실패 원인을 `DISK_FULL`로 남기려면 Job이 한도보다 작은 자체 예산으로 디스크 여유를 점검해야 한다. 지금은 하지 않는다. 원인은 Pod 이벤트(`Evicted`)로 확인한다.
 
 ### 컨테이너 종료 신호 [확인]
 
@@ -786,8 +786,8 @@ TargetGroupBinding은 Service selector로 고른 Pod를 ALB 타깃으로 등록�
 ### 확인 필요
 
 - S3 request metrics와 server access logs는 best-effort다. 정확한 카운트가 필요하면 계측 프록시를 쓴다.
-- `podFailurePolicy`와 `restartPolicy: Never`의 제약, ephemeral-storage 초과 eviction이 `DisruptionTarget`으로 분류되는지.
-- emptyDir `sizeLimit` 초과 시 eviction에 grace period가 적용되는지.
+- `podFailurePolicy`와 `restartPolicy: Never`의 제약.
+- (kind v1.35.8에서 확인) emptyDir `sizeLimit` 초과로 축출된 Pod에는 `DisruptionTarget` 조건이 붙지 않았다. Job 조건은 `BackoffLimitExceeded`. 컨테이너는 축출 3초 뒤 exit 137로 끝났고 SIGTERM 처리(`FAILED(TERMINATED)` 보고)는 일어나지 않았다. `terminationGracePeriodSeconds`(30초)가 적용되지 않은 것으로 보이지만 kubelet 소스로 확인하지는 않았다.
 - EKS Pod Identity와 `automountServiceAccountToken: false`의 호환성.
 
 ### 확인 완료 (S3·CloudFront) [확인]

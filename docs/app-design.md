@@ -318,6 +318,11 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 - 컨테이너 이미지: Python slim + ffmpeg. 변환 프로파일(래더 설정)에 버전을 붙여 `profile_version`으로 기록한다.
 - 로컬 실행 모드는 §10의 저장소 인터페이스를 쓴다. 로컬 개발 중에는 AWS를 쓰지 않는다.
 - 미완성 버전 경로 정리는 CronJob이 한다 (design.md §10 1단계).
+- 운영 CronJob 구현 (결정: 2026-11-20): api 이미지를 웹 서버 없이(`spring.main.web-application-type=none`, `ott.ops-check.run=true`) 한 번 실행하는 `jobapi.OpsCheck`. 상태 전이 규칙과 DB 접근을 api와 같은 코드로 쓰기 위해서다.
+  - `LOST`·`NOT_STARTED`는 조건을 포함한 단일 UPDATE로 확정한다. 읽고 나서 쓰기 전에 heartbeat가 끼어드는 틈을 두지 않기 위해서다. 같은 행을 두고 동시에 들어오는 경우는 테스트하지 않았다.
+  - 기본값: `lostAfter` 2분(heartbeat 15초의 8배), `startDeadline` 10분, `cleanupAfter` 2시간(transcode Job `activeDeadlineSeconds` 기본 1시간보다 길게), 5분마다 실행(kind는 1분).
+  - 종료 코드: 공개 버전이 불완전하거나 정리에 실패한 버전이 있으면 1. 한 버전을 못 지워도 나머지 정리는 계속한다.
+  - 로컬 hostPath에서는 파일 소유자가 남으므로 CronJob을 transcoder와 같은 uid(999)로 돌린다. S3 단계에서는 의미가 없다.
 
 구현에서 정한 것 (결정: 2026-10-15):
 

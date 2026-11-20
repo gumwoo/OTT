@@ -77,6 +77,7 @@ uv run --project scripts/admin ott-admin --api http://localhost:8086 transcode <
 - kubectl 명령에는 `--context kind-ott`를 붙인다. `up.sh`는 클러스터를 만들 때 바뀐 current-context를 원래대로 돌려놓는다
 - 서명 키 `.local/kind-signing.pem`은 처음 실행할 때 만든다. CloudFront와 무관한 로컬 키다
 - 이미지를 다시 빌드하면 `kind load docker-image --name ott ott-api:local` 후 `kubectl --context kind-ott -n ott rollout restart deploy/ott-api`
+- 운영 CronJob `ott-ops-check`는 kind에서 1분마다 돈다. 결과는 `kubectl --context kind-ott -n ott logs job/<이름>`의 `Ops check finished` 줄. 기한을 바꿔 보려면 `helm upgrade ... --set opsCheck.lostAfter=1m` 처럼 넘긴다
 - 지우기: `kind delete cluster --name ott`. 네임스페이스만 지우면 PV가 옛 PVC를 가리킨 채(Released) 남아 다시 붙지 않는다. 그때는 `kubectl --context kind-ott delete pv ott-source ott-content` 후 `up.sh`
 
 ## 폴더

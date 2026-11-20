@@ -159,7 +159,7 @@ public class TranscodeJobService {
 			.single();
 	}
 
-	// 조건을 UPDATE 안에서 다시 평가하므로, 같은 순간 들어온 heartbeat가 먼저 커밋되면 그 작업은 건드리지 않는다
+	// 확인과 확정을 한 문장으로 해서, 읽은 뒤 쓰기 전에 heartbeat가 끼어드는 틈을 두지 않는다
 	@Transactional
 	public List<TranscodeJob> failLost(Duration lostAfter) {
 		return this.jdbc.sql("""
