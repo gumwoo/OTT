@@ -135,6 +135,7 @@ qoe_events         id, client_event_id(unique), session_id, kind(PERIODIC|FINAL)
 | CSRF 토큰 없음·불일치 | `AccessDeniedHandler` (`CsrfException` 계열 판별) | 403 `CSRF_INVALID` |
 | 권한 없음 (ADMIN 전용 등) | `AccessDeniedHandler` | 403 `FORBIDDEN` |
 | 구독 등급 부족 | 서비스 예외 → advice | 403 `PLAN_REQUIRED` |
+| `/internal/*`: TokenReview 호출·응답 해석 실패 | `JobTokenAuthenticationFilter` → advice | 503 `TOKEN_REVIEW_UNAVAILABLE` (Job은 5xx를 재시도한다, §8) |
 
 세 경로 모두 §6의 ProblemDetail 형식으로 응답한다.
 
@@ -253,7 +254,10 @@ publish 응답:
   - 로컬 구현은 `ott.content.local-root`(local 프로필 `../.local/content`)를 읽는다. 설정이 없으면 기동을 실패시킨다. S3 구현은 AWS 단계에서 붙인다.
 - 인증은 ServiceAccount 토큰 + TokenReview. 인증 로직은 인터페이스로 두고, `local` 프로필에서만 고정 개발용 토큰 구현으로 바꾼다.
 - **운영에서 개발용 구현이 켜지지 않게** 막는다. 개발용 토큰은 `local`·`test` 프로필에서만 쓸 수 있고, 그 밖의 프로필에서 개발용 토큰 설정이 감지되면 기동을 실패시킨다.
-  - 구현: `/internal/**`은 별도 `SecurityFilterChain`(STATELESS, CSRF 없음)이고 `Authorization: Bearer`만 본다. 세션 쿠키로는 들어올 수 없다. 개발용 토큰은 `ott.internal.dev-token`이고 `local`·`test` 프로필에서만 허용한다. 검증기가 없으면(TokenReview 구현 전) `/internal/*`은 모두 401이다.
+  - 구현: `/internal/**`은 별도 `SecurityFilterChain`(STATELESS, CSRF 없음)이고 `Authorization: Bearer`만 본다. 세션 쿠키로는 들어올 수 없다. 개발용 토큰은 `ott.internal.dev-token`이고 `local`·`test` 프로필에서만 허용한다.
+  - TokenReview (결정: 2026-11-20): `ott.internal.token-review.enabled=true`면 Job 토큰을 `POST /apis/authentication.k8s.io/v1/tokenreviews`(audience `ott-api`)로 확인한다. 인증됨, 응답 audiences에 `ott-api` 포함, 주체가 `ott.internal.token-review.service-account`(`system:serviceaccount:<ns>:transcoder`)일 때만 통과한다. api ServiceAccount에는 `tokenreviews create`만 준다(`deploy/charts/ott`).
+  - 토큰이 틀리면 401 `UNAUTHENTICATED`, TokenReview 호출·해석이 실패하면 503 `TOKEN_REVIEW_UNAVAILABLE`. 빈 토큰은 API 서버가 400으로 거절하므로 호출하지 않고 401로 거부한다.
+  - 기동 조건: 개발용 토큰과 TokenReview를 함께 켜면 실패. `local`·`test`가 아닌 프로필에서 둘 다 없으면 실패. `local`·`test`에서 둘 다 없으면 `/internal/*`을 모두 401로 막고 경고만 남긴다.
 
 ### 오류 응답 형식 (결정: 2026-10-13)
 
@@ -314,6 +318,11 @@ RFC 9457 `ProblemDetail`에 확장 필드 `code`를 더한다. `Content-Type: ap
 - 컨테이너 이미지: Python slim + ffmpeg. 변환 프로파일(래더 설정)에 버전을 붙여 `profile_version`으로 기록한다.
 - 로컬 실행 모드는 §10의 저장소 인터페이스를 쓴다. 로컬 개발 중에는 AWS를 쓰지 않는다.
 - 미완성 버전 경로 정리는 CronJob이 한다 (design.md §10 1단계).
+- 운영 CronJob 구현 (결정: 2026-11-20): api 이미지를 웹 서버 없이(`spring.main.web-application-type=none`, `ott.ops-check.run=true`) 한 번 실행하는 `jobapi.OpsCheck`. 상태 전이 규칙과 DB 접근을 api와 같은 코드로 쓰기 위해서다.
+  - `LOST`·`NOT_STARTED`는 조건을 포함한 단일 UPDATE로 확정한다. 읽고 나서 쓰기 전에 heartbeat가 끼어드는 틈을 두지 않기 위해서다. 같은 행을 두고 동시에 들어오는 경우는 테스트하지 않았다.
+  - 기본값: `lostAfter` 2분(heartbeat 15초의 8배), `startDeadline` 10분, `cleanupAfter` 2시간(transcode Job `activeDeadlineSeconds` 기본 1시간보다 길게), 5분마다 실행(kind는 1분).
+  - 종료 코드: 공개 버전이 불완전하거나 정리에 실패한 버전이 있으면 1. 한 버전을 못 지워도 나머지 정리는 계속한다.
+  - 로컬 hostPath에서는 파일 소유자가 남으므로 CronJob을 transcoder와 같은 uid(999)로 돌린다. S3 단계에서는 의미가 없다.
 
 구현에서 정한 것 (결정: 2026-10-15):
 

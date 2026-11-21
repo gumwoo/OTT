@@ -1,0 +1,14 @@
+api:
+  image:
+    # kind load로 넣은 이미지만 쓴다
+    pullPolicy: Never
+  database:
+    # docker compose의 postgres (CLAUDE.md 로컬 실행)
+    url: jdbc:postgresql://host.docker.internal:5434/ott
+  playback:
+    resourceBaseUrl: http://localhost:5180
+    keyPairId: LOCAL
+
+opsCheck:
+  # 로컬에서 확정 시점을 보기 쉽게 1분마다
+  schedule: "* * * * *"

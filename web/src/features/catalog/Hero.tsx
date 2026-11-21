@@ -24,13 +24,16 @@ export function Hero({
 }: Props) {
   return (
     <section className="relative">
-      <Artwork
-        contentId={item.id}
-        kind="still"
-        priority
-        className="aspect-video max-h-[85vh] w-full"
-      />
-      <div className="scrim-hero absolute inset-x-0 top-0 aspect-video max-h-[85vh]" />
+      {/* 막을 이미지 상자에 맞춘다. 막에 따로 aspect-video를 주면 85vh에 걸릴 때 폭이 16:9로 줄어 끊긴다 */}
+      <div className="relative">
+        <Artwork
+          contentId={item.id}
+          kind="still"
+          priority
+          className="aspect-video max-h-[85vh] w-full"
+        />
+        <div className="scrim-hero absolute inset-0" />
+      </div>
       <div className="relative -mt-12 px-6 md:absolute md:inset-x-0 md:bottom-0 md:mt-0 md:px-10 md:pb-16">
         <Heading className="text-3xl font-bold tracking-tight md:text-6xl">{item.title}</Heading>
         <p className="text-text-muted mt-3 text-sm font-medium">

@@ -43,7 +43,9 @@ public enum ErrorCode {
 
 	UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 요청 형식입니다"),
 
-	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
+	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다"),
+
+	TOKEN_REVIEW_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "작업 토큰을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요");
 
 	private final HttpStatus status;
 

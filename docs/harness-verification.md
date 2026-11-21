@@ -47,8 +47,18 @@ CONVENTIONS §11. 규칙을 일부러 어긴 코드로 검사가 실제로 막�
 
 스크립트 테스트가 실제로 잡는지도 봤다. `seed.sh`의 체크섬 비교를 항상 참으로 바꾸면 "내용이 다른 객체" 테스트가 실패한다.
 
+## K8 정책 검사 (2026-11-20, kind 단계)
+
+K8-02·03·04·06·07·09를 conftest v0.71.1 정책(`deploy/policy/k8s.rego`)으로 건다. kube-linter 대신 conftest 하나로 모았다. 규칙이 모두 "필드가 있는가·값이 맞는가"라서 Rego 몇 줄로 끝나고, 의도적 위반을 정책 단위 테스트로 남길 수 있다.
+
+| 확인 | 결과 |
+|---|---|
+| `conftest verify -p deploy/policy` (규칙별로 일부러 어긴 입력 + 정상 입력. 컨테이너가 Pod 설정을 덮는 경우, privileged, root, 단독 Pod 포함) | 20 passed |
+| `helm template`(kind values) + `deploy/kind/storage.yaml` (CI와 같은 입력) | 216 passed |
+| 운영자 CLI가 그린 transcode Job 매니페스트 | 18 passed |
+| 렌더링 결과에서 `component: api` 라벨을 지우고 `readOnlyRootFilesystem`을 false로 바꿈 | K8-02 2건, K8-04 2건 FAIL, 종료 코드 1 |
+
 ## 아직 확인하지 않은 것
 
-- K8-02 등 매니페스트 검사: `deploy/` 차트가 아직 없다. kind 단계에서 차트와 함께 건다.
 - FE-09(hls.js), FE-12(Testing Library·Playwright): 플레이어를 옮기는 web 단계에서 건다.
 - CI에서의 실행: 이 기록은 로컬 결과다. GitHub Actions 결과는 첫 PR에서 확인한다.

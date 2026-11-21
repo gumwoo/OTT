@@ -3,6 +3,7 @@ package dev.gumwoo.ott.common.security;
 import java.io.IOException;
 import java.util.List;
 
+import dev.gumwoo.ott.common.error.ApiException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,15 +22,27 @@ class JobTokenAuthenticationFilter extends OncePerRequestFilter {
 
 	private final JobTokenVerifier verifier;
 
-	JobTokenAuthenticationFilter(JobTokenVerifier verifier) {
+	private final SecurityErrorHandler errorHandler;
+
+	JobTokenAuthenticationFilter(JobTokenVerifier verifier, SecurityErrorHandler errorHandler) {
 		this.verifier = verifier;
+		this.errorHandler = errorHandler;
 	}
 
 	@Override
 	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
 			throws ServletException, IOException {
 		String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-		if (header != null && header.startsWith(BEARER) && this.verifier.verify(header.substring(BEARER.length()))) {
+		boolean verified;
+		try {
+			verified = header != null && header.startsWith(BEARER)
+					&& this.verifier.verify(header.substring(BEARER.length()));
+		}
+		catch (ApiException ex) {
+			this.errorHandler.write(request, response, ex);
+			return;
+		}
+		if (verified) {
 			SecurityContextHolder.getContext()
 				.setAuthentication(UsernamePasswordAuthenticationToken.authenticated("transcoder", null,
 						List.of(new SimpleGrantedAuthority("ROLE_TRANSCODER"))));
