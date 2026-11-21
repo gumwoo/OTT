@@ -1,8 +1,8 @@
 # OTT
 
-국가마다 볼 수 있는 콘텐츠가 다른 VOD 서비스를 AWS에서 만들고, 운영할 때 생기는 문제를 실험으로 확인하는 1인 프로젝트.
+국가마다 볼 수 있는 콘텐츠가 다른 VOD 서비스를 AWS에서 만들고, 운영할 때 생기는 문제를 실험으로 확인하는 1인 프로젝트. 서비스 이름은 Stillcut이다.
 
-지금은 로컬 개발 단계다. AWS 배포와 실험은 개발을 다 끝낸 뒤에 필요한 기간만 리소스를 만들어서 하고 바로 철거한다.
+로컬 개발(앱, 변환 Job, 운영자 CLI, 로컬 Kubernetes 검증)을 마쳤다. 다음은 AWS 배포와 실험이다. 필요한 기간만 리소스를 만들어서 하고 바로 철거한다.
 
 ## 왜 만들었나
 
@@ -22,6 +22,30 @@ EKS는 OTT라서 꼭 필요한 게 아니다. API 하나만 보면 ECS가 더 �
 
 계획된 구성이다. 아직 배포하지 않았다. 그림 파일은 draw.io에서 그대로 열어 고칠 수 있고, 자세한 흐름과 근거는 [docs/design.md](docs/design.md) §3.
 
+## 지금 동작하는 것 (로컬)
+
+AWS 없이 로컬에서 "원본 등록 → 변환 → 게시 → 재생"까지 돈다. 실행 방법은 [docs/development.md](docs/development.md).
+
+| 영역 | 내용 |
+|---|---|
+| 앱 | 가입·로그인(세션, CSRF), 모의 구독, 카탈로그, HLS 재생과 Signed Cookie 발급, QoE 보고. Signed Cookie 검증은 CloudFront가 있어야 해서 AWS 단계에서 확인한다 |
+| 변환 Job | FFmpeg 4단 화질 변환 → 로컬 검증 → 덮어쓰지 않는 버전 경로에 업로드 → API에 게시 요청. heartbeat를 보내고 SIGTERM을 받으면 `FAILED`를 보고한다 |
+| 운영자 CLI | 콘텐츠 등록, 변환 요청과 실행(`docker run` 또는 `kubectl create`), 상태 확인, 롤백 |
+| 로컬 Kubernetes (kind) | api를 운영 프로필로 띄우고, Job 토큰을 TokenReview로 확인한다(`transcoder` ServiceAccount만 통과). PSS restricted 네임스페이스, `tokenreviews create`만 주는 RBAC, 운영 CronJob(보고 없이 죽은 작업 확정, 미완성 버전 정리) |
+
+### kind에서 재현한 실패
+
+로컬 단일 노드 kind에서 한 번씩 재현한 결과다. AWS 실험(E9)을 대신하지 않는다. 자세한 기록은 [docs/impl/06-kind.md](docs/impl/06-kind.md).
+
+| 주입 | 결과 |
+|---|---|
+| 변환 중 Pod 삭제 | 약 5초 뒤 Job이 직접 `FAILED(TERMINATED)` 보고 |
+| 변환 중 Pod 강제 종료 | Job은 보고하지 못함. 2분 24초 뒤 운영 CronJob이 heartbeat 기준으로 `FAILED(LOST)` 확정 |
+| `activeDeadlineSeconds` 초과 | Kubernetes가 종료, Job이 `FAILED(TERMINATED)` 보고 |
+| 작업 디렉터리 디스크 한도 초과 | 쓰기 오류(ENOSPC) 없이 Pod 축출, 보고 없음 → `FAILED(LOST)`. 설계 때 세운 가설이 맞았다 |
+| 등록만 하고 시작하지 않은 작업 | 시작 기한 뒤 `FAILED(NOT_STARTED)` |
+| 다른 ServiceAccount·다른 audience·위조 토큰으로 `/internal/*` 호출 | 모두 401. TokenReview 권한을 지우면 503(Job이 재시도할 수 있는 응답) |
+
 ## 핵심 결정
 
 | 결정 | 이유 | 대가 |
@@ -30,13 +54,15 @@ EKS는 OTT라서 꼭 필요한 게 아니다. API 하나만 보면 ECS가 더 �
 | 국가 판정은 CloudFront Function + KVS에서 하고, 국가는 캐시 키에 넣지 않는다 | 국가마다 캐시가 갈라지지 않는다 | 정책을 바꾸면 엣지 반영까지 지연이 생긴다. 얼마나 걸리는지 측정하는 게 실험 E5 |
 | 게시는 DB 행 잠금 안에서 세대 번호(`publish_epoch`)와 최고 게시 버전을 함께 검사한다 | 늦게 끝난 옛 버전이나 롤백 전에 시작한 작업이 롤백을 덮지 못한다 | 롤백은 운영자 전용 동작으로 따로 둬야 한다 |
 | 쿠키는 공개 버전 경로 단위로 발급한다 | 쿠키 하나로 다른 콘텐츠나 공개 전 버전을 받을 수 없다 | 버전이 바뀌면 쿠키를 다시 받아야 한다 |
-| 규칙은 문서가 아니라 검사로 강제한다 (ArchUnit, ESLint, Ruff, tflint, trivy, CI) | 규칙을 적어만 두면 지켜지지 않는다. 일부러 어긴 코드로 실제로 막히는지 확인했다 ([기록](docs/harness-verification.md)) | 검사 도구 버전을 맞추고 관리하는 일이 생긴다 |
+| 변환 Job은 자동 재시도하지 않는다(`backoffLimit: 0`). 보고 없이 죽은 작업은 heartbeat를 보고 운영 CronJob이 확정한다 | 재시도한 Pod가 처음부터 다시 변환하면 한 버전 안에 두 번의 결과가 섞일 수 있다 | 복구는 자동이 아니라 운영자가 새 버전으로 다시 요청한다 |
+| Job의 API 호출은 ServiceAccount 토큰 + TokenReview로 인증한다 | 게시 API를 경로 분리만으로 막지 않는다. audience와 ServiceAccount까지 확인한다 | api가 Kubernetes API를 부르고, 그 호출이 실패할 때의 응답(503)을 따로 정해야 한다 |
+| 규칙은 문서가 아니라 검사로 강제한다 (ArchUnit, ESLint, Ruff, tflint, trivy, conftest, CI) | 규칙을 적어만 두면 지켜지지 않는다. 일부러 어긴 코드로 실제로 막히는지 확인했다 ([기록](docs/harness-verification.md)) | 검사 도구 버전을 맞추고 관리하는 일이 생긴다 |
 
 결정마다의 배경은 [docs/adr](docs/adr/)와 설계 문서에 있다.
 
 ## 실험 계획
 
-아직 측정 전이다. 수치는 측정한 뒤에만 여기에 적는다.
+AWS 실험은 아직 측정 전이다. 수치는 측정한 뒤에만 여기에 적는다.
 
 | 실험 | 확인하려는 것 |
 |---|---|
@@ -52,10 +78,14 @@ EKS는 OTT라서 꼭 필요한 게 아니다. API 하나만 보면 ECS가 더 �
 
 ## 트러블슈팅
 
-개발하면서 실제로 겪은 것들.
+개발하면서 실제로 겪은 것들. 원인을 추적한 문제는 [docs/troubleshooting](docs/troubleshooting/)에 하나씩 남겼다.
 
 | 문제 | 원인 | 조치 |
 |---|---|---|
+| 인증에 실패한 Job 토큰이 401이 아니라 503으로 돌아옴 | Kubernetes가 인증 실패 응답에서 `authenticated` 필드를 아예 빼고 보냈다. `boolean`으로 받던 코드가 응답 해석에 실패해 "TokenReview 호출 실패"로 처리됐다. 손으로 만든 테스트 응답에는 `false`가 들어 있어서 놓쳤다 | kind에서 받은 실제 응답으로 테스트를 바꾸고 `Boolean`으로 받음 ([TS-0008](docs/troubleshooting/TS-0008-tokenreview-missing-authenticated.md)) |
+| 운영 CronJob이 실패한 버전 폴더를 지우지 못하고 점검 전체가 멈춤 | 로컬 저장소(hostPath)에 transcoder의 uid가 소유자로 남는다. 다른 uid는 지울 수 없었고, 예외 하나가 나머지 단계까지 끝냈다 | 같은 uid로 실행하고, 버전마다 실패를 기록하고 계속 ([TS-0009](docs/troubleshooting/TS-0009-ops-check-cannot-delete-transcoder-files.md)) |
+| 세션이 만료되면 로그인 화면에 들어갈 수 없음 | 캐시에 남은 내 정보를 믿고 `/login`에서 홈으로 돌려보냈다 | 어느 요청이든 401이면 캐시를 비우고 `/login`을 새로 연다 ([TS-0007](docs/troubleshooting/TS-0007-stale-me-cache-blocks-login.md)) |
+| 상세 화면 주소를 직접 열면 nginx 404 | Vite 프록시 키 `/content`가 접두어로 비교돼 `/contents/...`도 영상 서버로 갔다 | 키를 `^/content/`로 바꿈 ([TS-0005](docs/troubleshooting/TS-0005-vite-proxy-content-prefix.md)) |
 | 업로드 스크립트가 segment 업로드에 실패해도 master playlist까지 올림 | 파일별 실패를 출력만 하고 마지막에 개수만 셌다. 빠진 segment를 참조하는 버전이 재생 가능해질 수 있었다 | 앞 단계가 하나라도 실패하면 다음 단계를 올리지 않게 바꾸고, 실패를 주입하는 테스트로 재현·확인 ([#2](https://github.com/gumwoo/OTT/pull/2)) |
 | API가 로컬 DB에 붙을 때 비밀번호 인증 실패 | 오류 메시지가 한국어로 나와서 컨테이너가 아니라 Windows에 직접 설치된 PostgreSQL 18이 5432를 쓰고 있다는 걸 알았다 | compose 쪽 포트를 5434로 옮김 |
 | CI에서 `terraform init`이 provider 체크섬 불일치로 실패 | lock 파일을 Windows에서 만들어 Windows 해시만 들어 있었다 | `terraform providers lock`으로 linux·darwin 해시 추가 |
@@ -68,11 +98,11 @@ EKS는 OTT라서 꼭 필요한 게 아니다. API 하나만 보면 ECS가 더 �
 | API | Spring Boot 4.1, Spring Security 7.1, JPA, Flyway, PostgreSQL 17 |
 | 웹 | React 19, React Router 8, TanStack Query 5, Vite 8, Tailwind 4 |
 | 변환 | Python 3.13, FFmpeg |
-| 인프라 | AWS (CloudFront, S3, EKS, RDS), Terraform. Helm·Argo CD는 쿠버네티스 단계에서 추가 |
-| 검사 | GitHub Actions, ArchUnit, Checkstyle, ESLint, Ruff, mypy, tflint, trivy, CodeQL |
+| 인프라 | AWS (CloudFront, S3, EKS, RDS), Terraform, Helm, kind(로컬 Kubernetes). Argo CD는 AWS 단계에서 추가 |
+| 검사 | GitHub Actions, ArchUnit, Checkstyle, Testcontainers, ESLint, Ruff, mypy, conftest, kubeconform, tflint, trivy, CodeQL |
 
 ## 문서
 
 - [설계](docs/design.md), [앱 설계](docs/app-design.md), [ADR](docs/adr/)
 - [개발 규칙](docs/CONVENTIONS.md), [하네스 검증 기록](docs/harness-verification.md), [UI 규칙](docs/ui.md)
-- [개발 환경과 로컬 실행](docs/development.md)
+- [개발 환경과 로컬 실행](docs/development.md), [단계별 구현 기록](docs/impl/), [트러블슈팅](docs/troubleshooting/)
