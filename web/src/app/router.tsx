@@ -1,4 +1,4 @@
-import { createBrowserRouter, redirect, type RouteObject } from 'react-router';
+import { redirect, type RouteObject } from 'react-router';
 import { AccountPage } from '../features/account/AccountPage';
 import { meQueryOptions } from '../features/auth/api';
 import { AuthForm } from '../features/auth/AuthForm';
@@ -59,5 +59,3 @@ export const routes: RouteObject[] = [
     ],
   },
 ];
-
-export const router = createBrowserRouter(routes);
