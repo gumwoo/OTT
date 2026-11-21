@@ -28,7 +28,7 @@ function Header() {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-20 transition-colors duration-300 ${scrolled ? 'bg-bg' : 'scrim-top'}`}
+      className={`fixed inset-x-0 top-0 z-20 transition-colors duration-300 ${scrolled ? 'bg-bg' : 'scrim-top [text-shadow:0_1px_3px_rgb(0_0_0/0.8)]'}`}
     >
       <div className="flex h-14 items-center gap-10 px-6 md:px-10">
         <Link to="/" className="text-xl font-bold tracking-tight">

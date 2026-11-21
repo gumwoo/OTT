@@ -59,7 +59,7 @@ export function AccountPage() {
           type="button"
           onClick={() => change.mutate(next)}
           disabled={change.isPending}
-          className="bg-accent text-bg rounded-sm px-5 py-2 font-semibold disabled:opacity-60"
+          className="bg-text text-bg rounded-sm px-5 py-2 font-semibold hover:opacity-90 disabled:opacity-60"
         >
           {next}으로 바꾸기
         </button>
