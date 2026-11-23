@@ -4,6 +4,18 @@
 
 로컬 개발(앱, 변환 Job, 운영자 CLI, 로컬 Kubernetes 검증)을 마쳤다. 다음은 AWS 배포와 실험이다. 필요한 기간만 리소스를 만들어서 하고 바로 철거한다.
 
+## 화면
+
+로컬에서 BASIC 계정으로 찍었다. 작품 영상과 이미지는 Blender Foundation의 오픈 무비(CC BY)다.
+
+| 홈 | 모바일 |
+|---|---|
+| <img src="docs/images/screens/home.jpg" alt="홈: 대표 작품과 작품 목록" width="560"> | <img src="docs/images/screens/mobile-home.jpg" alt="모바일 홈" width="230"> |
+
+| PREMIUM 작품 상세 (BASIC 계정이라 재생 대신 구독 안내) | 재생 (HLS) |
+|---|---|
+| <img src="docs/images/screens/detail.jpg" alt="PREMIUM 작품 상세" width="400"> | <img src="docs/images/screens/player.jpg" alt="재생 화면" width="400"> |
+
 ## 왜 만들었나
 
 이전 프로젝트 FlowTicket에서는 동시 요청이 몰리는 서비스를 EKS에서 HPA와 Cluster Autoscaler로 늘리고, 부하 테스트로 확인했다. 그건 한 리전 안에서 한 종류의 서버를 늘리고 줄이는 문제였다. 이번에는 거기서 다루지 못한 두 가지를 골랐다.
