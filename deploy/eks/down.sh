@@ -7,8 +7,12 @@ context=${CONTEXT:-ott-eks}
 k() { kubectl --context "$context" "$@"; }
 
 # finalizer(resources-finalizer.argocd.argoproj.io)가 차트 리소스를 지운 뒤에 Application이 사라진다
-k -n argocd delete application ott --ignore-not-found --wait --timeout 5m
-if k -n ott get targetgroupbinding -o name 2> /dev/null | grep -q .; then
+# 다시 실행하거나 Argo CD를 먼저 지운 경우에는 Application 종류 자체가 없다
+if k get crd applications.argoproj.io > /dev/null 2>&1; then
+  k -n argocd delete application ott --ignore-not-found --wait --timeout 5m
+fi
+if k get crd targetgroupbindings.elbv2.k8s.aws > /dev/null 2>&1 \
+  && k -n ott get targetgroupbinding -o name | grep -q .; then
   echo "TargetGroupBinding still exists in namespace ott" >&2
   exit 1
 fi

@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), (7-2 Terraform)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), (7-2b EKS 배포)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -12,7 +12,7 @@
 |---|---|
 | 7-1 S3 저장소 어댑터 (api·transcoder·운영자 CLI·Job 템플릿) | 이 문서 |
 | 7-2 1단계 Terraform (EKS·RDS·VPC, plan까지) | 아래 |
-| 7-2b EKS 배포 (차트 values, TargetGroupBinding, 컨트롤러) | 예정 |
+| 7-2b EKS 배포 (차트 values, TargetGroupBinding, 컨트롤러) | 아래 |
 | 7-3 국가별 Edge 정책 함수 | 예정 |
 | 7-4 정책 배포 파이프라인 | 예정 |
 | 7-5 실험 측정 도구 | 예정 |
@@ -101,7 +101,7 @@ design.md §10은 삭제 권한을 운영 CronJob의 ServiceAccount에만 준다
 - 7-2에서 위 권한 표대로 IAM과 Pod Identity 연결을 만든다
 - 재생(브라우저 → CloudFront → S3)은 AWS 단계에서 확인한다
 
-## 7-2 1단계 Terraform
+## 7-2 1단계 Terraform (#53)
 
 ### 1. 만든 것
 
@@ -179,3 +179,61 @@ trivy MEDIUM(CI는 HIGH 이상만 막는다)으로 남긴 것: 컨트롤 플레�
 
 - 7-2b: 클러스터에 api·ops-check 배포(EKS용 values, TargetGroupBinding, 컨트롤러 설치, DB·서명 키 Secret), 철거 절차의 빈칸 채우기
 - 7-2b: IMDS hop 1이라 AWS Load Balancer Controller·Cluster Autoscaler가 리전·VPC를 IMDS로 찾지 못한다. 설치 값에 `region`·`vpcId`를 넣는다
+
+## 7-2b EKS 배포
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `deploy/charts/ott` | `api.storage`(local·s3)로 저장소를 고른다. s3면 content PVC 대신 `OTT_CONTENT_S3_BUCKET`·`OTT_CONTENT_S3_REGION`, 운영 CronJob은 uid 10001. `api.targetGroupBinding`(Terraform Target Group에 api Pod IP 등록), `api.adminSecret`(있으면 관리자 계정 생성) |
+| `deploy/eks/values.yaml` | EKS 공통 값: api 2개, s3, TargetGroupBinding 켬, 관리자 Secret |
+| `deploy/eks/application.yaml` | Argo CD Application. 계정마다 다른 값은 `${...}` 자리표시자 |
+| `deploy/eks/up.sh` | kubeconfig(context 되돌림) → 컨트롤러 2개·Argo CD Helm 설치 → 네임스페이스·Secret → Application |
+| `deploy/eks/down.sh` | Application 삭제(finalizer로 차트 리소스까지) → TargetGroupBinding이 남았는지 확인 |
+| CI `deploy` 잡 | EKS 값으로도 `helm lint --strict`, 렌더링 결과와 Application을 kubeconform(CRD 스키마 포함)·conftest로 검사, 스크립트 shellcheck |
+
+### 2. 흐름
+
+`up.sh` → Argo CD가 `deploy/charts/ott`를 `../../eks/values.yaml` + `valuesObject`로 렌더링 → Deployment `ott-api`(Pod Identity 역할 `ott-api`) + Service + TargetGroupBinding → AWS Load Balancer Controller가 Pod IP를 Target Group에 등록 → ALB `/api/*` → CloudFront VPC origin
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| 관리자 계정은 로컬 bootRun이 같은 DB에 만든다 (kind) | EKS는 Secret `ott-admin`을 api에 넣어 시작할 때 만든다 | RDS는 private 서브넷이라 로컬에서 붙을 수 없다 | aws.md |
+| 계정별 값의 위치 (설계에 없음) | Application `valuesObject`를 `up.sh`가 Terraform 출력으로 채운다 | 저장소가 공개라 계정 ID·RDS 주소를 커밋하지 않는다 | 이 문서 |
+
+### 4. 구현하면서 정한 것
+
+- **Argo CD는 Helm으로 직접 설치한다.** ego-browser로 확인한 EKS Argo CD capability(관리형)는 capability 시간당 요금과 Application 시간당 요금이 붙고, 로그인은 AWS Identity Center만 된다(EKS 요금 페이지, capability 비교 문서). 직접 설치는 추가 요금이 없고 같은 설치를 kind에서 먼저 확인할 수 있다
+- 버전 고정: AWS Load Balancer Controller 차트 3.6.2(IAM 정책과 같은 버전), Cluster Autoscaler 차트 9.59.0 + 이미지 v1.35.3(클러스터 1.35와 같은 minor), Argo CD 차트 10.17.2(배포 시점 기준 2주 넘게 지난 릴리스)
+- Argo CD 값 파일: 차트와 같은 저장소면 차트 루트 기준 상대 경로로 읽는다(Argo CD Helm 문서). `../../eks/values.yaml`
+- RDS PostgreSQL 15 이상은 `rds.force_ssl` 기본값이 1이다(RDS 사용자 가이드). JDBC URL에 `sslmode=require`를 넣는다. 인증서 검증(`verify-full`)은 이미지에 RDS CA가 없어서 하지 않는다
+- kubeconform CRD 스키마는 datreeio/CRDs-catalog를 커밋 SHA로 고정한다(`targetgroupbinding_v1beta1`, `application_v1alpha1`)
+- RDS 관리 비밀번호는 기본 7일마다 바뀐다(RDS 사용자 가이드). `ott-db`는 `up.sh` 실행 시점의 복사본이라, 다시 실행해 값이 바뀌면 api를 `rollout restart` 한다
+- 차트는 `helm --repo`로 받는다. `helm repo add --force-update`는 사용자의 전역 repo 설정을 덮어쓴다
+- 독립 검증 에이전트 지적 반영: Git Bash에서 Windows용 terraform·kubectl·python에 POSIX 경로를 넘기던 문제(`cygpath -m`), 비밀번호 교체, `down.sh` 재실행, 관리자 비밀번호를 명령줄에 쓰던 예시
+
+### 5. 검증
+
+검증한 것:
+
+- kind 렌더링이 바뀌지 않았다: 바꾸기 전 차트와 `helm template ... -f deploy/kind/values.yaml` 출력이 같다(diff 없음)
+- EKS 값: `helm lint --strict`, kubeconform 22개 valid(kind·EKS 렌더링, storage, Application), conftest 396 passed, shellcheck, actionlint
+- 차트 가드: `api.storage=gcs` → `api.storage must be local or s3`, s3인데 버킷 없음 → `api.contentBucket is required for s3`
+- kind에서 Argo CD 경로 (2026-11-27):
+  - Argo CD 차트 10.17.2 설치, `argocd-cm`의 `application.resourceTrackingMethod=annotation`
+  - Helm 릴리스를 지우고 이 브랜치를 가리키는 Application으로 바꿈 → `Synced/Healthy`, Deployment에 `argocd.argoproj.io/tracking-id: ott:apps/Deployment:ott/ott-api`, api readiness `UP`
+  - 운영자 CLI가 만드는 것과 같은 라벨의 Job을 직접 만들고 hard refresh → Application은 `Synced/Healthy` 그대로, 관리 리소스 목록에 없고, Job도 지워지지 않았다 (K8-09 전제)
+  - Application을 지우자 차트 리소스가 모두 지워졌다(finalizer). `down.sh`가 기대는 동작이다
+  - 확인 뒤 Argo CD를 지우고 kind를 Helm 릴리스로 되돌렸다
+
+검증하지 못한 것:
+
+- `up.sh`·`down.sh` 실제 실행(AWS 필요). TargetGroupBinding 등록, Pod Identity 자격 증명, Cluster Autoscaler 확장, RDS SSL 연결
+- 운영 CronJob(uid 10001, Pod Identity)의 S3 삭제
+
+### 6. 남은 일
+
+- 7-3: CloudFront 서명 키와 key group(`KEY_PAIR_ID`, `.local/aws-signing.pem`을 만드는 절차)
