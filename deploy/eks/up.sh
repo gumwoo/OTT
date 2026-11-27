@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# usage: API_TAG=<ECR 이미지 태그> KEY_PAIR_ID=<CloudFront 공개 키 ID> bash deploy/eks/up.sh
+# usage: API_TAG=<ECR 이미지 태그> bash deploy/eks/up.sh
 # 관리자 계정은 환경 변수 OTT_ADMIN_EMAIL·OTT_ADMIN_PASSWORD (docs/aws.md "배포"). infra apply 뒤에 실행한다
 set -euo pipefail
 
 : "${API_TAG:?API_TAG is required (ECR ott-api image tag)}"
-: "${KEY_PAIR_ID:?KEY_PAIR_ID is required (CloudFront public key ID)}"
 : "${OTT_ADMIN_EMAIL:?OTT_ADMIN_EMAIL is required}"
 : "${OTT_ADMIN_PASSWORD:?OTT_ADMIN_PASSWORD is required}"
 REVISION=${REVISION:-main}
@@ -38,6 +37,7 @@ db_endpoint=$(out compute db_endpoint)
 db_secret=$(out compute db_secret_arn)
 distribution=$(out base distribution_domain)
 content_bucket=$(out base content_bucket)
+key_pair_id=$(out base signing_key_pair_id)
 account=$(aws sts get-caller-identity --query Account --output text)
 api_image="$account.dkr.ecr.$REGION.amazonaws.com/ott-api"
 
@@ -100,7 +100,7 @@ sed -e "s|\${REVISION}|$REVISION|" \
   -e "s|\${API_TAG}|$API_TAG|" \
   -e "s|\${DB_ENDPOINT}|$db_endpoint|" \
   -e "s|\${DISTRIBUTION_DOMAIN}|$distribution|" \
-  -e "s|\${KEY_PAIR_ID}|$KEY_PAIR_ID|" \
+  -e "s|\${KEY_PAIR_ID}|$key_pair_id|" \
   -e "s|\${CONTENT_BUCKET}|$content_bucket|" \
   -e "s|\${REGION}|$REGION|" \
   -e "s|\${TARGET_GROUP_ARN}|$target_group|" \

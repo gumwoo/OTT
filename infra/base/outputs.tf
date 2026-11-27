@@ -18,6 +18,21 @@ output "content_bucket" {
   value       = aws_s3_bucket.content.bucket
 }
 
+output "signing_key_pair_id" {
+  description = "api Signed Cookie 키 ID (deploy/eks/up.sh의 KEY_PAIR_ID)"
+  value       = aws_cloudfront_public_key.api.id
+}
+
+output "test_signing_key_pair_id" {
+  description = "synthetic 클라이언트 테스트 키 ID"
+  value       = aws_cloudfront_public_key.test.id
+}
+
+output "policy_store_arn" {
+  description = "국가 정책 KVS ARN (정책 배포 파이프라인이 쓴다)"
+  value       = aws_cloudfront_key_value_store.policies.arn
+}
+
 output "source_bucket" {
   description = "원본 버킷 이름"
   value       = aws_s3_bucket.source.bucket

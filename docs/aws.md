@@ -28,6 +28,20 @@ terraform -chdir=infra/base init -backend-config=../backend.hcl
 terraform -chdir=infra/compute init -backend-config=../backend.hcl
 ```
 
+## 서명 키 (계정에 한 번)
+
+api가 Signed Cookie를 서명하는 키와, synthetic 클라이언트가 쓰는 테스트 키를 따로 만든다. 개인키는 `.local/`(커밋 안 함)에만 둔다. base는 공개 키만 읽는다.
+
+```bash
+for name in aws-signing aws-test-signing; do
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out ".local/$name.pem"   # PKCS#8
+  openssl pkey -in ".local/$name.pem" -pubout -out ".local/$name.pub.pem"
+done
+```
+
+- `/content/*`는 api 키(`aws-signing`)만, `/content/test-*`는 테스트 키만 신뢰한다 (design.md §5)
+- 키 ID는 base apply 뒤 `terraform -chdir=infra/base output -raw signing_key_pair_id`. `deploy/eks/up.sh`가 직접 읽는다
+
 ## 생성
 
 ```bash
@@ -66,8 +80,7 @@ docker build -t "$REGISTRY/ott-transcoder:$TAG" transcoder && docker push "$REGI
 
 # 관리자 계정은 로컬처럼 .local/admin.env에서 읽는다(명령줄에 비밀번호를 쓰지 않는다)
 set -a && . .local/admin.env && set +a
-# 서명 키(.local/aws-signing.pem)와 CloudFront 공개 키 ID는 7-3에서 base가 만든다
-API_TAG=$TAG KEY_PAIR_ID=<공개 키 ID> bash deploy/eks/up.sh
+API_TAG=$TAG bash deploy/eks/up.sh
 ```
 
 - RDS가 관리하는 DB 비밀번호는 기본 7일마다 바뀐다(RDS 사용자 가이드). Secret `ott-db`는 `up.sh`를 실행한 시점의 값이다. 실험이 7일을 넘기면 `up.sh`를 다시 실행한다. 값이 바뀌었으면 api를 다시 띄운다

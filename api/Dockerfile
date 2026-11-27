@@ -3,7 +3,8 @@ WORKDIR /app
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle ./gradle
 COPY config ./config
-RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon dependencies -q > /dev/null
+# 실패할 때만 저장소 조회 로그를 남긴다. 플러그인 조회가 간헐적으로 실패한 원인을 아직 모른다 (TS-0010)
+RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon dependencies --info > /tmp/deps.log 2>&1     || { grep -Ei 'http|resolv|timed out|refused|unknownhost|ssl|status|could not' /tmp/deps.log | tail -80; exit 1; }
 COPY src ./src
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar -x test \
     && cp build/libs/api-*-SNAPSHOT.jar app.jar \

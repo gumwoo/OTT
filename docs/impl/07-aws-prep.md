@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), (7-2b EKS 배포)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), (7-3 Edge 정책)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -13,7 +13,7 @@
 | 7-1 S3 저장소 어댑터 (api·transcoder·운영자 CLI·Job 템플릿) | 이 문서 |
 | 7-2 1단계 Terraform (EKS·RDS·VPC, plan까지) | 아래 |
 | 7-2b EKS 배포 (차트 values, TargetGroupBinding, 컨트롤러) | 아래 |
-| 7-3 국가별 Edge 정책 함수 | 예정 |
+| 7-3 국가별 Edge 정책 함수 | 아래 |
 | 7-4 정책 배포 파이프라인 | 예정 |
 | 7-5 실험 측정 도구 | 예정 |
 
@@ -180,7 +180,7 @@ trivy MEDIUM(CI는 HIGH 이상만 막는다)으로 남긴 것: 컨트롤 플레�
 - 7-2b: 클러스터에 api·ops-check 배포(EKS용 values, TargetGroupBinding, 컨트롤러 설치, DB·서명 키 Secret), 철거 절차의 빈칸 채우기
 - 7-2b: IMDS hop 1이라 AWS Load Balancer Controller·Cluster Autoscaler가 리전·VPC를 IMDS로 찾지 못한다. 설치 값에 `region`·`vpcId`를 넣는다
 
-## 7-2b EKS 배포
+## 7-2b EKS 배포 (#54)
 
 ### 1. 만든 것
 
@@ -236,4 +236,66 @@ trivy MEDIUM(CI는 HIGH 이상만 막는다)으로 남긴 것: 컨트롤 플레�
 
 ### 6. 남은 일
 
-- 7-3: CloudFront 서명 키와 key group(`KEY_PAIR_ID`, `.local/aws-signing.pem`을 만드는 절차)
+- 7-3에서 처리: CloudFront 서명 키와 key group, `up.sh`가 키 ID를 base 출력에서 읽는다
+
+## 7-3 국가별 Edge 정책
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `infra/base/functions/content-access.js` | `/content/*`·`/content/test-*` viewer request. URI의 contentId로 KVS `policy:{id}`를 읽고 `CloudFront-Viewer-Country`와 계약 기간으로 허용·거부 |
+| `infra/base/functions/test/content-access.test.mjs` | 같은 코드를 Node에서 가짜 KVS로 돌린다. 크기 10KB 검사 포함 |
+| `infra/base/cloudfront.tf` | KVS `ott-policies`, 함수(runtime 2.0, KVS 연결), 공개 키·key group 두 쌍(api·test), `/content/test-*`(테스트 key group) → `/content/*`(api key group) 순서의 behavior. 둘 다 국가 헤더 Origin Request Policy |
+| `docs/aws.md` "서명 키" | openssl로 키 두 개를 만들고 공개 키만 base에 넘긴다 |
+
+판정 (design.md §6·§7):
+
+| 조건 | 응답 |
+|---|---|
+| URI가 `/content/{id}/v{n}/{파일}` 꼴이 아님 | 403 `POLICY_UNAVAILABLE` |
+| KVS에 키 없음 (`get` 실패 후 `exists`가 false) | 403 `POLICY_UNAVAILABLE` |
+| 읽기 실패, JSON 깨짐, `rights`나 기간 형식 오류 | 503 (사유 헤더 없음) |
+| 국가가 `rights`에 없음, 국가 헤더 없음 | 403 `GEO_BLOCKED` |
+| `now < notBefore` 또는 `now >= notAfter` | 403 `NOT_AVAILABLE` |
+| 그 밖 | 요청을 그대로 origin으로 |
+
+거부 응답은 `X-Playback-Denied`(웹 플레이어가 읽는 이름), `Cache-Control: no-store`, 정책을 읽었으면 `X-Policy-Rev`를 단다.
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| 키 없음·읽기 실패 구분은 통합 테스트로 결정 (design §7) | `get` 실패 때만 `exists`를 다시 부른다 | `get`은 키가 없어도 예외를 던진다(KVS helper 문서). 정상 경로는 읽기 한 번 | design.md §7 |
+| 기간 단위 미정 | epoch 초 | 정책 파이프라인(7-4)이 같은 단위로 쓴다 | design.md §6 |
+| (없음) | URI 꼴이 맞지 않으면 정책을 찾기 전에 거부 | contentId 규칙(api `AdminContentController`)과 버전 경계 `/v{n}/`를 함수가 직접 확인한다. `..`, 하위 폴더, 대문자, 인코딩된 문자를 막는다 | 이 문서 |
+
+### 4. 구현하면서 정한 것
+
+ego-browser로 확인 (CloudFront 개발자 가이드):
+
+- KVS는 `import cf from 'cloudfront'; cf.kvs()`, `get(key, { format })`은 Promise, 키가 없으면 오류, `exists(key)`는 boolean
+- runtime 2.0은 `async`/`await`를 지원하고, `Date`는 한 번 실행하는 동안 시작 시각으로 고정된다
+- `CloudFront-Viewer-Country`는 Origin Request Policy로 넣으면 캐시 키에 들어가지 않는다. viewer request 함수에서 읽히는지는 0단계 `geo-probe` 스모크 테스트로 확인한다 (design §10, 실측 전)
+
+그 밖에:
+
+- 개인키는 Terraform이 만들지 않는다. 상태 파일에 남기지 않으려고 공개 키 경로만 변수로 받는다(`signing_public_key_path`, `test_signing_public_key_path`)
+- `deploy/eks/up.sh`는 `KEY_PAIR_ID`를 base 출력 `signing_key_pair_id`에서 읽는다
+- api는 `test-`로 시작하는 contentId를 거부한다(`AdminContentController`, 400). `/content/test-*`는 테스트 key group이 지키므로 운영 콘텐츠가 그 경로에 들어가면 테스트 키로 열린다
+- 국가 헤더가 없으면 403 `GEO_BLOCKED`다(기본 거부, design §6). Origin Request Policy 연결을 빠뜨린 설정 오류도 이렇게 보이므로, 배포 직후 `geo-probe`로 헤더가 보이는지 먼저 확인한다
+- 독립 검증 에이전트 지적 반영: `test-` 접두사 예약, `rights`가 배열이면 503, 테스트 시각 고정(런타임처럼 `Date.now` 고정), 빠진 경우 테스트(null 정책, 원소 수, 응답 헤더)
+
+### 5. 검증
+
+검증한 것:
+
+- `node --test infra/base/functions/test/` 7개 통과: 허용, 국가 없음·헤더 없음, 기간 경계(`notBefore` 포함, `notAfter` 제외, 고정 시각으로 1초 단위), 키 없음, 읽기 실패·깨진 값 7가지 503, 경로 우회 9가지. 검증 에이전트가 `>=`↔`>`, `<`↔`<=`, 503을 통과로 바꾸는 변이를 넣어 각각 실패하는 것을 확인했다
+- api `./gradlew check`: `test-movie` 등록이 400
+- base `terraform validate`, tflint, trivy HIGH·CRITICAL 0, shellcheck, actionlint
+- 키 생성 명령: 개인키 `BEGIN PRIVATE KEY`(PKCS#8), 공개 키 `BEGIN PUBLIC KEY`, 2048비트
+
+검증하지 못한 것:
+
+- 실제 CloudFront: 서명 검증과 함수의 실행 순서(design §12 "만료 Cookie + 금지 국가"), 국가 헤더가 함수에 보이는지, KVS 읽기 실패 때 응답, 함수의 compute utilization
+- 함수가 받는 URI가 정규화된 뒤의 값인지 원래 값인지. 어느 쪽이든 꼴이 맞지 않으면 거부한다

@@ -435,6 +435,7 @@ S3에 HLS 파일이 남아 있어도 `current_version`이 사라지면 API가 �
 주의 사항:
 
 - Resource는 `https://<host>/content/movie-100/v2/*`처럼 **콘텐츠와 버전 경계에 슬래시를 포함**해 `movie-1000`이나 `v20`과 매칭되지 않게 한다. [설계]
+- `test-`로 시작하는 contentId는 테스트 key group 경로(`/content/test-*`)에 걸린다. api는 이 접두사로 콘텐츠를 등록하지 않는다(`AdminContentController` 검증). 운영 콘텐츠가 테스트 키로 열리지 않게 하기 위해서다. [설계]
 - URI 인코딩·경로 정규화로 다른 contentId가 같은 리소스로 해석되지 않는지 테스트한다. [확인 필요]
 
 ### 테스트용 서명 키 [설계]
@@ -473,7 +474,7 @@ value: {"rev":14,"rights":{"KR":[notBefore,notAfter],"ID":[notBefore,notAfter]}}
   압축 형식에서 국가당 약 28바이트이므로 30개국 안팎까지 들어간다는 계산이다 (계산값, 미측정). 한계에 닿으면 `policy:{contentId}:{country}` 분리 구조를 ADR로 비교한다.
 - 판정 규칙: `rights[country]`가 있고 `notBefore <= now < notAfter`일 때만 허용. **`notAfter`는 배타적 경계**다.
 - 정책 키가 없거나 국가가 `rights`에 없으면 **거부**한다 (기본 거부).
-- 계약서의 날짜는 현지 시간 기준일 수 있다. YAML에는 **시간대를 명시한 시각**으로 쓰고, CI가 epoch(UTC)로 변환한다.
+- 계약서의 날짜는 현지 시간 기준일 수 있다. YAML에는 **시간대를 명시한 시각**으로 쓰고, CI가 epoch(UTC, **초 단위**)로 변환한다. Function은 `Math.floor(Date.now() / 1000)`과 비교한다.
 - **예정된 계약 만료**는 `notAfter`로 Edge가 직접 집행한다. 전파 지연과 무관하다.
 - **갑작스러운 계약 취소**는 KVS 갱신과 전파 지연에 의존한다. 3단계 실험 대상이다.
 
@@ -495,6 +496,7 @@ value: {"rev":14,"rights":{"KR":[notBefore,notAfter],"ID":[notBefore,notAfter]}}
 | 배포 금지 국가 | 403 + 사유 코드 `GEO_BLOCKED` | 재시도하지 않음 |
 | 계약 기간 외 | 403 `NOT_AVAILABLE` | 재시도하지 않음 |
 | 정책 키 없음 | 403 `POLICY_UNAVAILABLE` | 재시도하지 않음 |
+| URI가 `/content/{id}/v{n}/{파일}` 꼴이 아님 (`..`, 하위 폴더, 인코딩 등) | 403 `POLICY_UNAVAILABLE` | 재시도하지 않음 |
 | Cookie 서명 실패·만료 | 403 (CloudFront 생성, 사유 헤더 없음) | 알려진 만료 시각 전에 미리 갱신 |
 | KVS 읽기 실패 | 503 | 지수 백오프, 최대 횟수 제한 |
 | 정책 JSON 파싱 오류 | 503 + Function 오류 알람 | 결정적 버그이므로 배포 전 스키마 검증으로 예방 |
@@ -502,7 +504,8 @@ value: {"rev":14,"rights":{"KR":[notBefore,notAfter],"ID":[notBefore,notAfter]}}
 - **Fail-closed는 "403 반환"이 아니라 "권한이 확인되지 않으면 콘텐츠를 주지 않는다"는 뜻**이다. 503도 fail-closed다.
 - Function 미처리 예외는 503이 된다. [확인 필요]
 - 사유 코드는 커스텀 헤더 `X-Playback-Denied`로 내려주고 (2026-10-14 웹 플레이어 구현에서 이름 확정), 앱과 영상이 같은 도메인이라(ADR-0008 A안) 웹 플레이어가 그대로 읽는다. 출처를 나누면 `Access-Control-Expose-Headers`에 등록해야 한다. 값은 위 표의 코드 하나뿐이고 내부 규칙은 노출하지 않는다.
-- "키 없음"과 "읽기 실패"를 `kvs.get()`만으로 구분할 수 있는지, `exists()`가 필요한지는 통합 테스트로 결정한다. [확인 필요]
+- "키 없음"과 "읽기 실패"의 구분 [설계, 문서 근거]: `get()`은 키가 없어도 예외를 던진다(CloudFront KVS helper 문서). 그래서 `get()`이 실패했을 때만 `exists()`를 한 번 더 불러, 없으면 403 `POLICY_UNAVAILABLE`, 있거나 `exists()`도 실패하면 503으로 본다. 실제 엣지에서의 동작은 통합 테스트로 확인한다. [확인 필요]
+- 정책을 읽은 거부 응답에는 `X-Policy-Rev`(Function이 읽은 `rev`)를 넣는다. 거부 응답은 `Cache-Control: no-store`다.
 
 ---
 

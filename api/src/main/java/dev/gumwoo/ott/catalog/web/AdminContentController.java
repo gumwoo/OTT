@@ -33,8 +33,9 @@ class AdminContentController {
 				request.durationSec()));
 	}
 
-	// Job 이름 transcode-{id}-v{n}이 63자 안에 들도록 id는 40자까지
-	record Request(@NotBlank @Size(max = 40) @Pattern(regexp = "[a-z0-9]([a-z0-9-]*[a-z0-9])?") String id,
+	// Job 이름 transcode-{id}-v{n}이 63자 안에 들도록 id는 40자까지.
+	// test-로 시작하는 경로는 CloudFront가 테스트 키로 검증하므로 운영 콘텐츠에 쓰지 않는다 (design.md §5)
+	record Request(@NotBlank @Size(max = 40) @Pattern(regexp = "(?!test-)[a-z0-9]([a-z0-9-]*[a-z0-9])?") String id,
 			@NotBlank @Size(max = 200) String title, @Size(max = 2000) String description, @NotNull Plan requiredPlan,
 			@Positive int durationSec) {
 	}

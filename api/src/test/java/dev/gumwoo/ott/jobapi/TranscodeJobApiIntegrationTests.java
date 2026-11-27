@@ -92,8 +92,13 @@ class TranscodeJobApiIntegrationTests extends IntegrationTest {
 		Response asUser = loggedIn(uniqueEmail()).post("/api/admin/contents/" + this.contentId + "/transcode-jobs",
 				jobRequest());
 
+		Response reserved = this.admin.post("/api/admin/contents", """
+				{"id": "test-movie", "title": "Test", "requiredPlan": "BASIC", "durationSec": 1}
+				""");
+
 		assertThat(duplicate.status()).isEqualTo(409);
 		assertThat(duplicate.json().get("code").asString()).isEqualTo("CONTENT_EXISTS");
+		assertThat(reserved.status()).isEqualTo(400);
 		assertThat(asUser.status()).isEqualTo(403);
 		assertThat(asUser.json().get("code").asString()).isEqualTo("FORBIDDEN");
 	}
