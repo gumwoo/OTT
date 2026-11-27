@@ -1,0 +1,41 @@
+# deploy/eks/up.sh가 ${...}를 채워 kubectl apply 한다. 롤백은 Git revert로 한다 (ADR-0011)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ott
+  namespace: argocd
+  # Application을 지우면 차트 리소스(TargetGroupBinding 포함)도 지운다. 철거 순서가 여기에 기댄다
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/gumwoo/OTT.git
+    targetRevision: "${REVISION}"
+    path: deploy/charts/ott
+    helm:
+      # ServiceAccount 이름이 IAM Pod Identity 연결(infra/compute/iam.tf)과 맞으려면 릴리스 이름이 ott여야 한다
+      releaseName: ott
+      valueFiles:
+        - ../../eks/values.yaml
+      valuesObject:
+        api:
+          image:
+            repository: "${API_IMAGE}"
+            tag: "${API_TAG}"
+          database:
+            url: "jdbc:postgresql://${DB_ENDPOINT}/ott?sslmode=require"
+          playback:
+            resourceBaseUrl: "https://${DISTRIBUTION_DOMAIN}"
+            keyPairId: "${KEY_PAIR_ID}"
+          contentBucket: "${CONTENT_BUCKET}"
+          region: "${REGION}"
+          targetGroupBinding:
+            targetGroupARN: "${TARGET_GROUP_ARN}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ott
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

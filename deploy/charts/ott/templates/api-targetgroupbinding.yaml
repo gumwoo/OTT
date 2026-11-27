@@ -1,0 +1,17 @@
+{{- $api := .Values.api -}}
+{{- if $api.targetGroupBinding.enabled }}
+# Target Group은 Terraform 소유(infra/compute/alb.tf). 컨트롤러가 그 안의 타깃을 완전히 관리하므로 다른 용도와 공유하지 않는다
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: {{ include "ott.api.name" . }}
+  labels:
+    {{- include "ott.labels" . | nindent 4 }}
+    {{- include "ott.api.selectorLabels" . | nindent 4 }}
+spec:
+  serviceRef:
+    name: {{ include "ott.api.name" . }}
+    port: 8080
+  targetGroupARN: {{ required "api.targetGroupBinding.targetGroupARN is required" $api.targetGroupBinding.targetGroupARN | quote }}
+  targetType: ip
+{{- end }}

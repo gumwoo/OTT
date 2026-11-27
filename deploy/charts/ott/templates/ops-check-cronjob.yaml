@@ -29,8 +29,9 @@ spec:
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
-            runAsUser: {{ $ops.runAsUser }}
-            runAsGroup: {{ $ops.runAsUser }}
+            {{- $uid := ternary $ops.runAsUser 10001 (eq $api.storage "local") }}
+            runAsUser: {{ $uid }}
+            runAsGroup: {{ $uid }}
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -59,8 +60,10 @@ spec:
               volumeMounts:
                 - { name: tmp, mountPath: /tmp }
                 - { name: signing, mountPath: /var/run/secrets/ott-signing, readOnly: true }
+                {{- if eq $api.storage "local" }}
                 # 미완성 버전을 지우므로 쓰기로 붙인다. api는 읽기만 한다
                 - { name: content, mountPath: /data/content }
+                {{- end }}
           volumes:
             - name: tmp
               emptyDir:
@@ -68,6 +71,8 @@ spec:
             - name: signing
               secret:
                 secretName: {{ $api.playback.signingSecret }}
+            {{- if eq $api.storage "local" }}
             - name: content
               persistentVolumeClaim:
                 claimName: {{ $api.contentClaim }}
+            {{- end }}

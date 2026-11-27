@@ -13,8 +13,18 @@ api:
     keyPairId: ""
     # private-key.pem 키를 가진 Secret (PKCS#8)
     signingSecret: ott-signing
-  # 로컬 저장소 구현(kind)에서 publish 검증이 읽는 content PVC. AWS 단계에서는 S3로 바뀐다
+  # email·password 키를 가진 Secret. 있으면 api가 시작할 때 관리자 계정이 없으면 만든다(AdminAccountInitializer).
+  # kind는 로컬 bootRun이 같은 DB에 만든 계정을 쓰므로 비워 둔다
+  adminSecret: ""
+  # local: content PVC(kind). s3: content 버킷(AWS). 저장소 구현은 api가 설정으로 고른다 (app-design.md §10)
+  storage: local
   contentClaim: ott-content
+  contentBucket: ""
+  region: ""
+  # AWS Load Balancer Controller가 Terraform이 만든 Target Group에 api Pod IP를 넣고 뺀다 (ADR-0011)
+  targetGroupBinding:
+    enabled: false
+    targetGroupARN: ""
   resources:
     requests:
       cpu: 250m
@@ -33,8 +43,8 @@ opsCheck:
   startDeadline: 10m
   # transcode Job의 activeDeadlineSeconds(ott-admin --deadline, 기본 3600)보다 길어야 한다
   cleanupAfter: 2h
-  # 로컬 hostPath에는 파일 소유자가 남는다. transcoder(uid 999)가 만든 버전 폴더(755)를 지우려면 같은 uid여야 한다.
-  # S3로 바뀌면 의미가 없다
+  # api.storage가 local일 때만 쓴다. hostPath에는 파일 소유자가 남아서, transcoder(uid 999)가 만든
+  # 버전 폴더(755)를 지우려면 같은 uid여야 한다. s3면 api 이미지 기본 uid(10001)로 돈다
   runAsUser: 999
   resources:
     requests:
