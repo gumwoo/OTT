@@ -1,18 +1,21 @@
 // E2 cold/warm 측정용. master → playlist → segment N개를 받아 요청별로 JSONL에 남긴다.
 // usage: node measure/hls-probe.mjs --url <master.m3u8> [--location seoul] [--label cold]
 //        [--segments 5] [--variant highest|lowest|N] [--out results/e2.jsonl]
+//        [--key <테스트 개인키 PEM> --key-pair-id <ID> [--cookie-ttl 600]]   /content/*는 Signed Cookie가 있어야 한다
 
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { cookieHeader, signedCookies, versionResource } from './lib/cloudfront-cookie.mjs';
 
 function parseArgs(argv) {
-  const args = { segments: 5, variant: 'highest', label: 'unlabeled', location: 'unknown', out: null };
+  const args = { segments: 5, variant: 'highest', label: 'unlabeled', location: 'unknown', out: null, 'cookie-ttl': 600 };
   for (let i = 2; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, '');
     args[key] = argv[i + 1];
   }
   if (!args.url) throw new Error('--url is required');
+  if (Boolean(args.key) !== Boolean(args['key-pair-id'])) throw new Error('--key and --key-pair-id go together');
   args.segments = Number(args.segments);
   return args;
 }
@@ -62,7 +65,7 @@ async function timedGet(url, ctx, kind) {
   const started = performance.now();
   let res;
   try {
-    res = await fetch(url, { headers: { 'user-agent': 'ott-hls-probe/0.1' } });
+    res = await fetch(url, { headers: { 'user-agent': 'ott-hls-probe/0.1', ...ctx.headers } });
   } catch (err) {
     ctx.records.push({
       runId: ctx.runId,
@@ -124,8 +127,18 @@ async function main() {
     seq: 0,
     location: args.location,
     label: args.label,
+    headers: {},
     records: []
   };
+  if (args.key) {
+    const cookies = signedCookies({
+      resource: versionResource(args.url),
+      expiresAt: Math.floor(Date.now() / 1000) + Number(args['cookie-ttl']),
+      keyPairId: args['key-pair-id'],
+      privateKeyPem: await readFile(args.key, 'utf8')
+    });
+    ctx.headers.cookie = cookieHeader(cookies);
+  }
 
   const started = performance.now();
   let variant = null;

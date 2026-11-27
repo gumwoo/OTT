@@ -3,13 +3,14 @@ import cf from 'cloudfront';
 
 var kvs = cf.kvs();
 
-// contentId 규칙은 api AdminContentController와 같다. 버전 경계 슬래시까지 본다 (design.md §5)
-var PATH = /^\/content\/([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)\/v[1-9][0-9]{0,8}\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
+// contentId 규칙은 api AdminContentController와 같다. 버전 경계 슬래시까지 본다 (design.md §5).
+// runs/{runId}/는 E2 cold 측정용 실행별 경로라 test- 콘텐츠에만 허용한다 (design.md §11)
+var PATH = /^\/content\/([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)\/(runs\/[a-z0-9-]{1,40}\/)?v[1-9][0-9]{0,8}\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
 
 async function handler(event) {
   var request = event.request;
   var match = PATH.exec(request.uri);
-  if (!match) {
+  if (!match || (match[2] && match[1].indexOf('test-') !== 0)) {
     return deny(403, 'POLICY_UNAVAILABLE', null);
   }
   var key = 'policy:' + match[1];

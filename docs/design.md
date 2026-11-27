@@ -708,6 +708,7 @@ T4  각 위치에서 정해진 관측 구간 W 동안 연속 차단을 확인한
 - T4도 **테스트 클라이언트의 관측 범위 안에서의 수렴**이다. 전 세계 모든 엣지의 수렴을 증명하지 않는다.
 - 결과에는 항상 **요청 간격, W, 위치별 클라이언트 수**를 함께 기록한다.
 
+- E2의 실행별 경로는 `/content/test-<이름>/runs/{runId}/v{n}/`이다. 엣지 함수가 `runs/`를 `test-` 콘텐츠에만 허용하고, 정책은 `policy:test-<이름>` 하나를 같이 쓴다. 실행 방법은 docs/experiments.md.
 - **[가설]** E2: Viewer-Country를 Origin Request Policy로 노출하면 CHR이 노출 전과 같다.
 - **[가설]** E3: Shield ON일 때 Origin GET이 1건에 가까워진다. 반드시 1건이 된다고 가정하지 않는다.
 

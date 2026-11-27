@@ -125,6 +125,19 @@ test('read failures and broken values fail closed with 503', async () => {
   assert.equal(rev(response), undefined);
 });
 
+test('per-run cold cache paths are allowed only for test content', async () => {
+  const handler = await load({
+    'policy:test-e2': policy({ KR: [NOW - DAY, NOW + DAY] }),
+    'policy:movie-100': policy({ KR: [NOW - DAY, NOW + DAY] }),
+  });
+  const run = request('/content/test-e2/runs/r20261127-01/v1/master.m3u8', 'KR');
+
+  assert.equal(await handler(run), run.request);
+  assert.equal(denied(await handler(request('/content/movie-100/runs/r1/v1/master.m3u8', 'KR'))), 'POLICY_UNAVAILABLE');
+  assert.equal(denied(await handler(request('/content/test-e2/runs/r1/r2/v1/master.m3u8', 'KR'))), 'POLICY_UNAVAILABLE');
+  assert.equal(denied(await handler(request('/content/test-e2/runs/v1/master.m3u8', 'KR'))), 'POLICY_UNAVAILABLE');
+});
+
 test('paths outside /content/{id}/v{n}/{file} are refused before reading the policy', async () => {
   const handler = await load({ 'policy:movie-100': policy({ KR: [NOW - DAY, NOW + DAY] }) });
 
