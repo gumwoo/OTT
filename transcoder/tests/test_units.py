@@ -12,7 +12,7 @@ from transcoder.errors import ApiUnavailableError, ConfigError, VersionDirtyErro
 from transcoder.heartbeat import Heartbeat
 from transcoder.profile import LADDER, ffmpeg_command
 from transcoder.stop import StopSignal
-from transcoder.storage import LocalStorage
+from transcoder.storage import LocalStorage, S3Storage
 
 
 def test_validate_accepts_complete_output(tmp_path: Path) -> None:
@@ -161,8 +161,20 @@ def test_config_reads_the_token_file_on_every_call(tmp_path: Path) -> None:
         ({"JOB_TOKEN_FILE": "/nonexistent/token"}, "JOB_TOKEN_FILE not found"),
         ({"JOB_TOKEN": "t", "HEARTBEAT_SECONDS": "nan"}, "HEARTBEAT_SECONDS"),
         ({"JOB_TOKEN": "t", "HEARTBEAT_SECONDS": "0"}, "HEARTBEAT_SECONDS"),
+        ({"JOB_TOKEN": "t", "STORAGE": "gcs"}, "STORAGE must be"),
+        ({"JOB_TOKEN": "t", "STORAGE": "s3", "SOURCE_BUCKET": "src"}, "CONTENT_BUCKET"),
     ],
 )
 def test_config_rejects_incomplete_settings(override: dict[str, str], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
         from_env({**ENV, **override})
+
+
+def test_config_picks_s3_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
+    env = {k: v for k, v in ENV.items() if k not in {"SOURCE_ROOT", "CONTENT_ROOT"}}
+    s3 = {"STORAGE": "s3", "SOURCE_BUCKET": "src", "CONTENT_BUCKET": "content"}
+    config = from_env({**env, **s3, "JOB_TOKEN": "t"})
+
+    assert isinstance(config.storage(), S3Storage)
+    assert isinstance(from_env({**ENV, "JOB_TOKEN": "t"}).storage(), LocalStorage)

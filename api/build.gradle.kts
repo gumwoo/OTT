@@ -36,6 +36,13 @@ dependencies {
 		exclude(group = "software.amazon.awssdk", module = "apache5-client")
 		exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
 	}
+	// 동기 호출 몇 번뿐이라 Apache·Netty 대신 JDK HttpURLConnection 기반 클라이언트를 쓴다
+	implementation("software.amazon.awssdk:s3") {
+		exclude(group = "software.amazon.awssdk", module = "apache-client")
+		exclude(group = "software.amazon.awssdk", module = "apache5-client")
+		exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+	}
+	implementation("software.amazon.awssdk:url-connection-client")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")

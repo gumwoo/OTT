@@ -19,7 +19,6 @@ from transcoder.errors import (
 )
 from transcoder.profile import ffmpeg_command
 from transcoder.stop import StopSignal
-from transcoder.storage import LocalStorage
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ def _run(env: dict[str, str] | None, stop: StopSignal) -> int:
     try:
         settings = config.from_env(os.environ if env is None else env)
         api = ApiClient(settings.api_url, settings.spec.job_id, settings.token)
-        storage = LocalStorage(settings.source_root, settings.content_root)
+        storage = settings.storage()
         job.Job(
             spec=settings.spec,
             api=api,

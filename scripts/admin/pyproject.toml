@@ -2,17 +2,21 @@
 name = "ott-admin"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "boto3>=1.35.2",
+]
 
 [project.scripts]
 ott-admin = "ott_admin.cli:main"
 
 [dependency-groups]
 dev = [
+    "moto[s3]==5.2.5",
     "mypy==2.4.1",
     "pytest==9.2.0",
     "pyyaml==6.0.3",
     "ruff==0.17.5",
+    "types-boto3[s3]==1.44.6",
     "types-pyyaml==6.0.12.20261113",
 ]
 

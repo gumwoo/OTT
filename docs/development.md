@@ -51,11 +51,29 @@ uv run --project scripts/admin ott-admin transcode sample-1 sample.mp4
 - 그 밖의 명령: `job <jobId> [--wait] [--wait-timeout 초]`, `rollback <contentId> <version>`, `manifest <jobId> --job-api-url <클러스터 안 api 주소>`
 - `--runner kubectl`은 `deploy/jobs/transcode-job.yaml`을 채워 `kubectl create` 한다. 클러스터 준비는 아래 "kind"
 - `--runner none`은 등록만 하고 끝낸다
+- `--storage s3 --source-bucket <버킷> --content-bucket <버킷>`이면 원본을 source 버킷에 올리고(같은 키에 같은 내용이 있으면 그대로 쓰고, 다르면 멈춘다) transcoder가 S3에서 읽고 쓴다. `--runner kubectl`은 `deploy/jobs/transcode-job-s3.yaml`을 쓴다. 자격 증명은 AWS SDK 기본 순서로 찾고, `--runner docker`는 호스트의 `AWS_ACCESS_KEY_ID`·`AWS_SECRET_ACCESS_KEY`·`AWS_SESSION_TOKEN`·`AWS_REGION`을 이름만 넘긴다
 - 관리자 계정은 api를 띄울 때 `OTT_ADMIN_EMAIL`·`OTT_ADMIN_PASSWORD` 환경 변수로 만든다. CLI도 같은 변수를 읽고, 없으면 물어본다
 - Job 토큰 기본값 `local-dev-job-token`은 `application-local.properties`의 `ott.internal.dev-token`과 같아야 한다. local·test 프로필에서만 통한다
 - `docker stop transcode-<contentId>-v<n>`은 SIGTERM을 보낸다. transcoder는 ffmpeg를 끝내고 `FAILED(TERMINATED)`를 보고한다
 - 컨테이너는 uid 999로 돈다. Linux 호스트에서는 `.local/content`에 uid 999가 쓸 수 있어야 한다
 - 원본에 오디오 트랙이 있어야 한다. `media/transcode.sh`와 같은 래더라 오디오가 없으면 ffmpeg가 실패한다
+
+### S3 모드 로컬 확인 (moto)
+
+AWS 없이 S3 저장소 어댑터를 끝까지 돌려 볼 때 쓴다. 버킷 정책(조건부 쓰기 강제)과 IAM 권한은 moto가 흉내 내지 않으므로 AWS 단계에서 따로 확인한다.
+
+```bash
+docker run -d --name ott-moto -p 5005:5000 motoserver/moto:5.2.5
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=ap-northeast-2
+# 버킷 두 개(ott-source, ott-content)를 만든다. 예: transcoder 가상환경의 boto3로 create_bucket
+cd api && ./gradlew bootRun --args='--spring.profiles.active=local --ott.content.local-root= \
+  --ott.content.s3.bucket=ott-content --ott.content.s3.endpoint=http://localhost:5005 --ott.content.s3.region=ap-northeast-2'
+uv run --project scripts/admin ott-admin transcode <contentId> <원본> --source-root <원본 폴더> \
+  --storage s3 --source-bucket ott-source --content-bucket ott-content --s3-endpoint http://localhost:5005
+```
+
+- api는 `ott.content.local-root`와 `ott.content.s3.bucket` 중 하나만 받는다. local 프로필 위에서는 `--ott.content.local-root=`로 로컬 쪽을 끈다
+- 재생은 확인할 수 없다. 브라우저가 받는 영상은 content-server(`.local/content`)에서 온다
 
 ## kind
 
