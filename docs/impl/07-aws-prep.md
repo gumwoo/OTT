@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), (7-4 정책 파이프라인)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), (7-5 측정 도구)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -15,7 +15,7 @@
 | 7-2b EKS 배포 (차트 values, TargetGroupBinding, 컨트롤러) | 아래 |
 | 7-3 국가별 Edge 정책 함수 | 아래 |
 | 7-4 정책 배포 파이프라인 | 아래 |
-| 7-5 실험 측정 도구 | 예정 |
+| 7-5 실험 측정 도구 | 아래 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
 
@@ -300,7 +300,7 @@ ego-browser로 확인 (CloudFront 개발자 가이드):
 - 실제 CloudFront: 서명 검증과 함수의 실행 순서(design §12 "만료 Cookie + 금지 국가"), 국가 헤더가 함수에 보이는지, KVS 읽기 실패 때 응답, 함수의 compute utilization
 - 함수가 받는 URI가 정규화된 뒤의 값인지 원래 값인지. 어느 쪽이든 꼴이 맞지 않으면 거부한다
 
-## 7-4 정책 배포 파이프라인
+## 7-4 정책 배포 파이프라인 (#56)
 
 ### 1. 만든 것
 
@@ -363,3 +363,48 @@ ego-browser로 확인 (CloudFront 문서):
 - 실제 KVS: SigV4A 서명, `UpdateKeys` 409 응답 모양, 엣지 전파 시간(E5)
 - 워크플로 실행: PR 코멘트 권한, OIDC 역할 맡기(environment sub 조건), environment 브랜치 규칙이 PR 실행을 막는지
 - `--edit-last`는 bot이 그 PR에 남긴 마지막 코멘트를 고친다. 지금은 PR에 코멘트를 다는 다른 워크플로가 없다
+
+## 7-5 실험 측정 도구
+
+### 1. 만든 것
+
+실행 방법은 docs/experiments.md.
+
+| 파일 | 실험 | 하는 일 |
+|---|---|---|
+| `measure/lib/cloudfront-cookie.mjs` | 공통 | 테스트 키로 Signed Cookie(custom policy, SHA-256) 서명. Resource는 master가 있는 버전 디렉터리 `/*` |
+| `measure/hls-probe.mjs` | E1·E2 | `--key`·`--key-pair-id`를 주면 쿠키를 붙인다. 7-3 뒤로 `/content/*`는 쿠키 없이 403 |
+| `measure/policy-probe.mjs` | E5·E6 | 같은 URL을 간격 맞춰 반복 요청. 허용(200)·차단(403 + 정책 사유 코드)·오류(사유 없는 403, 5xx, 네트워크)와 `x-policy-rev`·POP |
+| `measure/e5-report.mjs` | E5·E6 | design §11의 T0~T4로 Pipeline·First Block·End-to-End Delay, Last Allow, Observed Convergence(W 동안 연속 차단), SLO 위반 수를 위치별로 |
+| `measure/api-probe.mjs` | E4·E7 | 웹 앱과 같은 CSRF·세션 흐름으로 로그인하고 재생 시작 API를 순서대로 호출. 성공률, p50/p95/p99, 가장 긴 실패 구간 |
+| `infra/base/functions/content-access.js` | E2 | `/content/test-*/runs/{runId}/v{n}/` 경로 허용(`test-` 콘텐츠만) |
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| E2 실행별 prefix `/content/{id}/runs/{runId}/` | 엣지 함수가 `runs/{runId}/`를 `test-` 콘텐츠에만 허용 | 7-3의 경로 검사가 `runs/`를 막았다. 운영 콘텐츠 경로는 그대로 좁게 둔다 | design.md §11 |
+| E8·E9 기록 도구 | 별도 도구 없이 `kubectl get events -w`·노드 목록과 api DB 상태 전이 | 클러스터와 DB가 이미 시각을 남긴다 | experiments.md |
+
+### 4. 구현하면서 정한 것
+
+- 서명 형식은 api `SignedCookieSigner`(AWS SDK)와 같다: 공백 없는 policy JSON(`Resource` → `Condition.DateLessThan.AWS:EpochTime`), base64에서 `+ = /`를 `- _ ~`로, `CloudFront-Hash-Algorithm=SHA256`. botocore `CloudFrontSigner`의 `_url_b64encode`·`build_policy` 소스와 같은 변환·JSON 모양인지 대조했다
+- 요청 간격은 시작 시각 기준으로 잡아 느린 응답이 있어도 측정이 밀리지 않게 한다
+- 사유 코드 없는 403은 차단으로 세지 않는다(design §11 T2 정의). E5 기본 `--codes`는 `GEO_BLOCKED,NOT_AVAILABLE`
+- 기록은 요청마다 바로 파일에 덧붙인다. 긴 측정이 중간에 끊겨도 그때까지 남는다
+- 요청마다 10초 제한. 늦어진 요청 뒤에는 밀린 요청을 몰아 보내지 않는다(E4 "부하 고정")
+- T4는 차단만 이어진 구간에서 W가 지난 시점의 차단까지 관측해야 인정한다. 요청 간격의 두 배를 넘는 관측 공백은 구간을 끊는다. SLO 위반의 예산은 T1부터 잰다(design §11은 기준점을 정하지 않았다)
+- 독립 검증 에이전트 지적 반영: T4가 W 뒤의 허용·오류·공백을 수렴으로 보던 문제(node로 재현됨), 요청 타임아웃, 몰아 보내기, 클라이언트별 간격, 잘못된 `--t0`·`--t1`, 실험 문서의 계정·명령 오류
+
+### 5. 검증
+
+검증한 것:
+
+- `node --test measure/test/*.test.mjs` 15개 통과(기존 hls-probe 5 + 새 10). 쿠키 서명을 공개 키로 검증, base64 알파벳, Resource 범위, 차단 분류, E5 지표(중간에 허용이 끼는 경우, W를 다 못 본 경우, 예산 초과 허용), 백분위·실패 구간, 가짜 api로 CSRF 로그인과 재생 실패 집계, 가짜 엣지로 허용 → 차단 전환과 rev, 수렴 판정(W 뒤 허용·오류·관측 공백은 미수렴), 몰아 보내기 없음
+- 엣지 함수 테스트 8개 통과(`runs/` 경로: test 콘텐츠 허용, 운영 콘텐츠·이중 runs·runId 없음 거부)
+- 로컬 api(local 프로필)에 `api-probe` 3초: 로그인, 재생 시작 15/15 성공(쿠키 `CloudFront-Signature` 포함), p50 31.5ms. 로컬 측정이라 AWS 지표로 쓰지 않는다
+- 로컬 content-server에 `hls-probe --key ...`: 쿠키를 붙여도 요청 4개 성공(content-server는 쿠키를 검사하지 않으므로 옵션이 요청을 깨지 않는다는 것만 확인)
+
+검증하지 못한 것:
+
+- 실제 CloudFront가 이 쿠키를 받아들이는지(서명·SHA-256 검증), 국가별 출발 IP에서의 측정
