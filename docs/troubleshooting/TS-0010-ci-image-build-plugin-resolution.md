@@ -1,8 +1,8 @@
 # TS-0010: CI의 api 이미지 빌드가 javaformat 플러그인을 간헐적으로 찾지 못한다
 
-- 상태: 완화 (원인 미확정)
+- 상태: 재발 (원인 미확정, 진단 로그 추가)
 - blog: skip
-- 날짜: 발생 2026-11-20 / 조치 2026-11-20
+- 날짜: 발생 2026-11-20 / 조치 2026-11-20 / 재발 2026-11-27
 - 모듈: api, CI
 - 환경: GitHub Actions `ubuntu-24.04`, api 잡의 `docker build`
 - 관련: PR #38 CI, main CI run 44706445444, 브랜치 `fix/api-plugin-repositories`
@@ -85,6 +85,15 @@ pluginManagement {
 검증하지 못한 것:
 
 - 원인. 간헐적인 실패라 CI가 몇 번 통과하는 것만으로 해결을 증명할 수 없다. 다시 실패하면 Dockerfile 의존성 단계를 `--info`로 돌려 HTTP 상태부터 확인한다.
+
+### 재발 (2026-11-27)
+
+PR #55(CI run 45977928779)의 api 잡 `docker build`에서 같은 단계가 같은 메시지로 실패했다. 이번에는 찾아본 저장소가 `MavenRepo`와 `Gradle Central Plugin Repository` 둘이다. **Central을 먼저 보게 한 완화로는 막지 못했다.** 같은 잡의 호스트 `./gradlew check`는 통과했다.
+
+- 최근 ci 실행 30번 중 이 실패는 이 한 번이다(`gh run list` + 실패 로그 검색).
+- 두 저장소가 함께 실패했으므로 특정 저장소 문제(가설 3)보다 Docker 빌드 컨테이너의 네트워크 쪽을 의심한다. 확인하지 못했다.
+- 조치: Dockerfile 의존성 단계를 `--info`로 돌리고, **실패할 때만** 저장소 조회 줄(HTTP 상태, 해석·연결 오류)을 출력한다. 성공할 때 로그는 그대로 조용하다. 다음 실패에서 HTTP 상태와 오류 종류부터 본다.
+- 로컬 `docker build` 성공(바꾼 Dockerfile).
 
 ## 7. 재발 방지
 

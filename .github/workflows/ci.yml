@@ -231,7 +231,8 @@ jobs:
         with:
           node-version: "24"
       # CloudFront Function을 가짜 KVS로 돌린다 (크기 10KB 검사 포함)
-      - run: node --test base/functions/test/
+      # Node 24는 디렉터리 인자를 테스트 파일로 펼치지 않는다
+      - run: node --test base/functions/test/*.test.mjs
       - run: |
           for stack in base compute; do
             (cd "$stack" && terraform init -backend=false -lockfile=readonly -input=false && terraform validate)
