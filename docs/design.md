@@ -386,6 +386,7 @@ ALB Target Group은 엔드포인트가 아니라 **Pod IP·포트**에 연결된
 | S3 (source, content, 앱, 테스트) | internal ALB, Target Group |
 | key group, OAC, 예산 알람, GitHub OIDC | CloudFront VPC origin |
 | 정책 Git 저장소 | RDS PostgreSQL |
+| ECR (이미지를 다시 올리지 않게) | VPC, NAT Gateway, Pod Identity 역할 |
 
 ### 철거 순서
 

@@ -7,6 +7,4 @@ terraform {
       version = "~> 6.0"
     }
   }
-
-  # TODO: compute 스택 전에 S3 backend로 이전
 }

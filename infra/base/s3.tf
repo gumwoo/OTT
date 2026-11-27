@@ -2,6 +2,26 @@ resource "aws_s3_bucket" "content" {
   bucket = "${var.project}-content-${local.bucket_suffix}"
 }
 
+# 원본. compute를 지워도 다시 변환할 수 있게 base에 둔다 (design.md §4)
+resource "aws_s3_bucket" "source" {
+  bucket = "${var.project}-source-${local.bucket_suffix}"
+}
+
+resource "aws_s3_bucket_public_access_block" "source" {
+  bucket                  = aws_s3_bucket.source.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "source" {
+  bucket = aws_s3_bucket.source.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 resource "aws_s3_bucket" "app" {
   bucket = "${var.project}-app-${local.bucket_suffix}"
 }

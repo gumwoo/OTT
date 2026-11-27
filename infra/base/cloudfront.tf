@@ -42,6 +42,18 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   code    = file("${path.module}/functions/spa-rewrite.js")
 }
 
+resource "aws_cloudfront_function" "api_maintenance" {
+  name    = "${var.project}-api-maintenance"
+  runtime = "cloudfront-js-2.0"
+  comment = "503 API_MAINTENANCE while the compute stack is down"
+  publish = true
+  code    = file("${path.module}/functions/api-maintenance.js")
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 resource "aws_cloudfront_function" "geo_probe" {
   name    = "${var.project}-geo-probe"
   runtime = "cloudfront-js-2.0"
@@ -70,6 +82,20 @@ resource "aws_cloudfront_distribution" "main" {
     origin_access_control_id = aws_cloudfront_origin_access_control.s3.id
   }
 
+  # VPC origin은 distribution이 참조하는 동안 지울 수 없어서 compute를 내리기 전에 false로 apply한다
+  dynamic "origin" {
+    for_each = var.enable_api ? [1] : []
+
+    content {
+      origin_id   = "api"
+      domain_name = data.aws_ssm_parameter.compute["alb-dns-name"].value
+
+      vpc_origin_config {
+        vpc_origin_id = data.aws_ssm_parameter.compute["vpc-origin-id"].value
+      }
+    }
+  }
+
   # 첫 번째 일치가 적용된다. /content/test-*는 /content/*보다 앞에 둘 것
   ordered_cache_behavior {
     path_pattern             = "/_probe/*"
@@ -95,6 +121,25 @@ resource "aws_cloudfront_distribution" "main" {
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
     compress               = true
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/*"
+    target_origin_id         = var.enable_api ? "api" : "app"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD"]
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = var.enable_api ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : null
+
+    dynamic "function_association" {
+      for_each = var.enable_api ? [] : [1]
+
+      content {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.api_maintenance.arn
+      }
+    }
   }
 
   default_cache_behavior {

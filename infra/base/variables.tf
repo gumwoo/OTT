@@ -39,6 +39,18 @@ variable "existing_github_oidc_provider_arn" {
   default     = null
 }
 
+variable "enable_api" {
+  description = "true면 /api/*를 compute 스택의 VPC origin으로 보낸다. false면 503 API_MAINTENANCE (design.md §4-1)"
+  type        = bool
+  default     = false
+}
+
+variable "ecr_keep_images" {
+  description = "ECR 저장소마다 남길 이미지 수"
+  type        = number
+  default     = 10
+}
+
 variable "log_retention_days" {
   description = "CloudFront 표준 로그 보관 기간"
   type        = number

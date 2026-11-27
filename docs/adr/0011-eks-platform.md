@@ -119,6 +119,16 @@ CloudFront VPC origin은 실제 ALB 리소스를 참조한다. Ingress가 ALB를
 ### 노드 배치
 
 - 워커 노드는 private 서브넷에 둔다. 이미지 pull·로그 전송 경로(NAT Gateway 또는 VPC endpoint)는 1단계 Terraform 작성 시 비용과 함께 결정하고 이 ADR에 기록한다.
+- **결정 (2026-11-27, infra/compute/vpc.tf)**: NAT Gateway **하나**(public 서브넷 첫 AZ) + S3 **Gateway** endpoint.
+
+  | 안 | 비용 구조 | 판단 |
+  |---|---|---|
+  | AZ마다 NAT Gateway | NAT 시간 요금 × 2 | AZ 장애는 실험 범위 밖(E4)이라 얻는 것이 없다 |
+  | **NAT 하나 + S3 Gateway endpoint** | NAT 시간 요금 × 1. S3 Gateway endpoint는 시간·데이터 요금이 없다 | 채택. 원본 다운로드와 산출물 업로드(가장 큰 트래픽)는 endpoint로 빠진다 |
+  | NAT 없이 Interface endpoint(ECR api·dkr, STS, Logs, EKS Auth 등) | endpoint마다 AZ당 시간 요금 | endpoint 수 × 2 AZ가 NAT 하나보다 많고, 외부 이미지(Helm 차트의 컨트롤러)를 받을 수 없다 |
+  | 노드를 public 서브넷에 | NAT 없음 | 노드에 공인 IP가 생긴다. 위 검증 항목 "워커 노드 IP로 직접 요청 → 도달 불가"와 어긋난다 |
+
+  금액은 리전 요금표로 확인하지 않았다. 실제 비용은 실험 후 Cost Explorer로 남긴다.
 - 1단계는 노드 그룹 하나로 시작한다. 배치 전용 노드 그룹은 4단계 E7에서 격리 효과를 비교할 때 추가한다.
 
 ### 롤백과 예외 대응

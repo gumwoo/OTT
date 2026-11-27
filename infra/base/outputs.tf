@@ -18,6 +18,16 @@ output "content_bucket" {
   value       = aws_s3_bucket.content.bucket
 }
 
+output "source_bucket" {
+  description = "원본 버킷 이름"
+  value       = aws_s3_bucket.source.bucket
+}
+
+output "ecr_repository_urls" {
+  description = "ECR 저장소 URL (api, transcoder)"
+  value       = { for name, repo in aws_ecr_repository.this : name => repo.repository_url }
+}
+
 output "app_bucket" {
   description = "플레이어 앱 버킷 이름"
   value       = aws_s3_bucket.app.bucket
