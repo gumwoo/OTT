@@ -89,6 +89,38 @@ def test_unquoted_yaml_timestamp_is_rejected(tmp_path: Path) -> None:
         load_dir(tmp_path)
 
 
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            "contentId: movie-100\ncontentId: movie-100\nrights: {}\n",
+            "duplicate keys: contentId",
+        ),
+        (
+            'contentId: movie-100\nrights:\n  NO: {notBefore: "2026-01-01T00:00:00Z",'
+            ' notAfter: "2027-01-01T00:00:00Z"}\n',
+            "quote the country code",
+        ),
+    ],
+)
+def test_ambiguous_yaml_is_rejected(tmp_path: Path, text: str, message: str) -> None:
+    (tmp_path / "movie-100.yaml").write_text(text, encoding="utf-8")
+
+    with pytest.raises(PolicyError, match=message):
+        load_dir(tmp_path)
+
+
+def test_the_same_content_in_two_files_is_rejected(tmp_path: Path) -> None:
+    write(tmp_path, "movie-100", {"KR": KR_2026})
+    write(tmp_path, "movie-100", {"US": KR_2026}, name="movie-100.yaml.bak")
+    (tmp_path / "movie-100.yml").write_text(
+        json.dumps({"contentId": "movie-100", "rights": {"US": KR_2026}}), encoding="utf-8"
+    )
+
+    with pytest.raises(PolicyError, match="defined twice"):
+        load_dir(tmp_path)
+
+
 def test_value_over_one_kilobyte_is_rejected() -> None:
     countries = [
         "KR",
@@ -212,6 +244,60 @@ def test_older_commit_cannot_overwrite_newer_policies(tmp_path: Path) -> None:
     with pytest.raises(DeployError, match="older commit"):
         deploy(store, load_dir(tmp_path), "older", lambda old, new: False)
     assert store.updates == []
+
+
+def test_first_deploy_starts_at_rev_one(tmp_path: Path) -> None:
+    write(tmp_path, "movie-100", {"KR": KR_2026})
+    store = FakeStore({})
+
+    result = deploy(store, load_dir(tmp_path), "first", lambda old, new: False)
+
+    assert result is not None
+    assert result.rev == 1
+    assert json.loads(store.updates[0][1][DEPLOY_KEY])["commit"] == "first"
+
+
+def test_delete_only_deploy_still_records_the_rev(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    gone = parse("gone", {"contentId": "gone", "rights": {"KR": KR_2026}}).value(2)
+    store = FakeStore(
+        {"policy:gone": gone, DEPLOY_KEY: json.dumps({"rev": 2, "commit": "a", "at": 1})}
+    )
+
+    result = deploy(store, load_dir(tmp_path), "b", lambda old, new: True)
+
+    assert result is not None
+    _, puts, deletes = store.updates[0]
+    assert deletes == ["policy:gone"]
+    assert json.loads(puts[DEPLOY_KEY])["rev"] == 3
+
+
+def test_deploy_refuses_more_than_fifty_items(tmp_path: Path) -> None:
+    for i in range(50):
+        write(tmp_path, f"movie-{i}", {"KR": KR_2026})
+
+    with pytest.raises(DeployError, match="50 policy keys"):
+        deploy(FakeStore({}), load_dir(tmp_path), "c", lambda old, new: True)
+
+
+def test_unreadable_kvs_values_stop_the_deploy(tmp_path: Path) -> None:
+    write(tmp_path, "movie-100", {"KR": KR_2026})
+
+    with pytest.raises(DeployError, match="_deploy in KVS"):
+        deploy(FakeStore({DEPLOY_KEY: "{"}), load_dir(tmp_path), "c", lambda old, new: True)
+    with pytest.raises(DeployError, match="policy value in KVS"):
+        deploy(
+            FakeStore({"policy:movie-100": '{"rev":1}'}), load_dir(tmp_path), "c", lambda o, n: True
+        )
+
+
+def test_deploy_needs_the_policies_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = ["deploy", "--policies", str(tmp_path / "missing"), "--kvs-arn", "arn", "--commit", "c"]
+
+    assert cli.main(args) == cli.EXIT_FAILED
+    assert "policies directory not found" in capsys.readouterr().err
 
 
 def test_nothing_to_deploy_leaves_the_store_alone(tmp_path: Path) -> None:

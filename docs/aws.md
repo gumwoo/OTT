@@ -47,13 +47,18 @@ done
 `.github/workflows/policy.yml`의 deploy job은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다.
 
 ```bash
-gh api -X PUT repos/gumwoo/OTT/environments/policy > /dev/null    # 역할 신뢰 조건이 environment:policy다
+# 역할 신뢰 조건이 environment:policy다. sub에 브랜치가 없으므로 environment가 main만 받게 한다 (GA-03)
+gh api -X PUT repos/gumwoo/OTT/environments/policy --input - > /dev/null << 'EOF'
+{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+EOF
+gh api -X POST repos/gumwoo/OTT/environments/policy/deployment-branch-policies -f name=main -f type=branch > /dev/null
 gh variable set POLICY_DEPLOY_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw policy_deploy_role_arn)"
 gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw policy_store_arn)"
 ```
 
 - 역할은 base tfvars에 `github_repo`를 넣어야 만들어진다
-- 첫 배포는 `policies/`를 바꾼 PR을 main에 merge하거나, Actions에서 policy 워크플로를 다시 실행한다
+- 첫 배포나 실패 뒤 다시 반영은 `gh workflow run policy.yml --ref main`
+- environment 규칙이 없으면 같은 저장소의 PR 브랜치가 워크플로를 고쳐 이 역할을 맡을 수 있다. 위 두 번째 명령을 빼먹지 않는다
 
 ## 생성
 

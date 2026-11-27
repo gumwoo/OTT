@@ -46,15 +46,21 @@ def deploy(
     last = store.get(DEPLOY_KEY)
     last_rev = 0
     if last is not None:
-        record = json.loads(last)
-        last_rev = int(record["rev"])
+        try:
+            record = json.loads(last)
+            last_rev = int(record["rev"])
+        except (ValueError, KeyError, TypeError) as e:
+            raise DeployError(f"{DEPLOY_KEY} in KVS is not readable: {last!r}") from e
         if not is_ancestor(str(record["commit"]), commit):
             raise DeployError(
                 f"{commit} does not contain the last deployed commit {record['commit']}; "
                 "an older commit must not overwrite newer policies"
             )
     rev = last_rev + 1
-    changes = plan(store.items(KEY_PREFIX), desired, rev)
+    try:
+        changes = plan(store.items(KEY_PREFIX), desired, rev)
+    except (ValueError, KeyError, TypeError, IndexError) as e:
+        raise DeployError(f"a policy value in KVS is not readable: {e}") from e
     if changes.change_count == 0:
         return None
     if changes.change_count > MAX_POLICY_CHANGES:
@@ -65,11 +71,14 @@ def deploy(
 
 
 def git_is_ancestor(ancestor: str, commit: str) -> bool:
-    completed = subprocess.run(  # noqa: S603 - 인자는 커밋 SHA뿐이다
-        ["git", "merge-base", "--is-ancestor", ancestor, commit],  # noqa: S607
-        check=False,
-        capture_output=True,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - 인자는 커밋 SHA뿐이다
+            ["git", "merge-base", "--is-ancestor", ancestor, commit],  # noqa: S607
+            check=False,
+            capture_output=True,
+        )
+    except FileNotFoundError as e:
+        raise DeployError("git is required to check the last deployed commit") from e
     if completed.returncode not in {0, 1}:
         raise DeployError(f"git merge-base failed: {completed.stderr.decode().strip()}")
     return completed.returncode == 0

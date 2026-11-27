@@ -46,6 +46,9 @@ def _check(args: argparse.Namespace) -> int:
 
 
 def _deploy(args: argparse.Namespace) -> int:
+    # 디렉터리가 없을 때 빈 정책으로 읽으면 KVS의 정책이 모두 지워진다
+    if not args.policies.is_dir():
+        raise PolicyError(f"policies directory not found: {args.policies}")
     desired = load_dir(args.policies)
     result = deploy(KvsStore(args.kvs_arn), desired, args.commit, git_is_ancestor)
     if result is None:

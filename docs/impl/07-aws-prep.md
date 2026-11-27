@@ -308,7 +308,7 @@ ego-browser로 확인 (CloudFront 개발자 가이드):
 |---|---|
 | `policies/*.yaml` | 콘텐츠당 파일 하나. 국가별 `notBefore`·`notAfter`(시간대가 있는 ISO 8601). 시드 4편과 실험용 `test-geo` |
 | `scripts/policy` (`ott-policy`) | `check`: 형식·ISO 3166-1 alpha-2·기간·파일 이름·KVS 값 1KB·PR당 바뀌는 키 49개 이하 검사와 영향 미리보기. `deploy`: KVS에 `UpdateKeys` 한 번 |
-| `.github/workflows/policy.yml` | PR: `check` 결과를 job 요약과 PR 코멘트로. main push: environment `policy`에서 OIDC로 역할을 받아 `deploy`. 저장소 변수가 없으면 건너뛴다 |
+| `.github/workflows/policy.yml` | PR: `check` 결과를 job 요약과 PR 코멘트로. main push·수동 실행: environment `policy`에서 OIDC로 역할을 받아 `deploy`. 저장소 변수가 없으면 건너뛴다 |
 | `infra/base/github_oidc.tf` | `ott-policy-deploy` 역할. 신뢰는 `repo:<저장소>:environment:policy`, 권한은 그 KVS의 `DescribeKeyValueStore`·`GetKey`·`ListKeys`·`UpdateKeys`만 |
 | CI `policy` 잡 | ruff·mypy·pytest와 `policies/` 검사 |
 
@@ -327,7 +327,7 @@ ego-browser로 확인 (CloudFront 개발자 가이드):
 
 | 설계 | 실제 구현 | 이유 | 반영한 문서 |
 |---|---|---|---|
-| 역할 신뢰 조건 미정 | GitHub environment `policy` | 브랜치 조건보다 좁다. 필요하면 environment에 승인자를 붙여 배포 전 승인을 받을 수 있다 | aws.md |
+| 역할 신뢰 조건 미정 | GitHub environment `policy` + environment 배포 브랜치를 `main`으로 제한 | AWS의 GitHub OIDC 조건 키는 `aud`·`sub`·`amr`뿐이라(IAM 조건 키 문서) environment sub에는 브랜치 조건을 걸 수 없다. 브랜치 제한은 GitHub environment 규칙이 맡는다. 필요하면 승인자도 붙일 수 있다 | aws.md, CONVENTIONS GA-03 |
 | 배포 뒤 synthetic 검증 | 7-5 측정 도구로 넘김 | 국가별 출발 IP가 필요하다 | design.md §8 |
 
 ### 4. 구현하면서 정한 것
@@ -337,10 +337,14 @@ ego-browser로 확인 (CloudFront 문서):
 - KeyValueStore API는 SigV4A로 서명한다. Python은 `boto3[crt]`(awscrt)가 있어야 한다. 임시 자격 증명은 v2 세션 토큰이어야 해서 리전 STS를 쓴다(`configure-aws-credentials`의 `aws-region`)
 - `UpdateKeys`는 `If-Match`에 `DescribeKeyValueStore`의 ETag를 받는다. IAM 동작 이름은 `cloudfront-keyvaluestore:*`
 
+- GitHub Actions 기본 셸은 `bash -e`라 파이프 앞 명령의 실패를 놓친다. `shell: bash`를 지정하면 `-o pipefail`이 붙는다(workflow syntax 문서). policy 워크플로는 `defaults.run.shell: bash`
+
 그 밖에:
 
 - YAML의 따옴표 없는 시각은 PyYAML이 datetime으로 바꾸면서 시간대를 잃을 수 있어서 문자열만 받는다
 - KVS 값 크기는 `rev`가 가장 길 때(2^31-1)로 잰다. 국가 38개면 1KB를 넘는다(테스트)
+- YAML은 같은 키가 두 번 나와도 뒤엣것으로 덮어쓰고, 따옴표 없는 `NO`(노르웨이)를 false로 읽는다. 둘 다 오류로 막는다. 같은 contentId가 두 파일(`.yaml`·`.yml`)에 있어도 막는다
+- `deploy`는 정책 디렉터리가 없으면 멈춘다. 빈 정책으로 읽으면 KVS 정책이 전부 지워진다
 - 같은 내용이면 rev가 달라도 다시 쓰지 않는다. `policy:{id}.rev`는 "그 키가 마지막으로 바뀐 배포 순번"이 된다
 - PR 단계의 "바뀌는 키 수"는 base 브랜치의 `policies/`와 내용으로 비교한다
 
@@ -348,12 +352,14 @@ ego-browser로 확인 (CloudFront 문서):
 
 검증한 것:
 
-- `scripts/policy` ruff·mypy strict·pytest 21개. 형식 오류 9가지, 1KB 초과, 바뀐 키만 쓰기·지운 키 delete, 다음 rev와 `_deploy`, 롤백이 새 rev, 오래된 커밋 거부, 변경 없음, 영향 미리보기 문구, 49개 초과 PR 거부
+- `scripts/policy` ruff·mypy strict·pytest 29개. 형식 오류 11가지(중복 키·`NO` 포함), 같은 콘텐츠 두 파일, 1KB 초과, 바뀐 키만 쓰기·지운 키 delete, 다음 rev와 `_deploy`, 롤백이 새 rev, 오래된 커밋 거부, 첫 배포 rev 1, 삭제만 있어도 `_deploy` 기록, 50개 초과 거부, KVS 값이 깨졌을 때 중단, 디렉터리 없음, 변경 없음, 영향 미리보기 문구, 49개 초과 PR 거부
 - `KvsStore`를 botocore `Stubber`로 감싸 요청·응답이 서비스 모델과 맞는지 확인(`IfMatch`, `Puts`, `Deletes`, `ListKeys` 페이지, 404 → 없음, 409 → 재실행 안내)
 - `ott-policy check --policies policies`: 정책 5개 통과, 미리보기 출력
 - base `terraform validate`, tflint, actionlint, `gh pr comment --edit-last --create-if-none` 옵션 존재(gh 2.95.0)
+- 독립 검증 에이전트 지적 반영: 파이프가 실패를 삼키던 문제(로컬 `bash -e`로 재현됨), environment 브랜치 제한, 디렉터리 없음, traceback 경로, 수동 실행, YAML 모호성
 
 검증하지 못한 것:
 
 - 실제 KVS: SigV4A 서명, `UpdateKeys` 409 응답 모양, 엣지 전파 시간(E5)
-- 워크플로 실행: PR 코멘트 권한, OIDC 역할 맡기(environment sub 조건)
+- 워크플로 실행: PR 코멘트 권한, OIDC 역할 맡기(environment sub 조건), environment 브랜치 규칙이 PR 실행을 막는지
+- `--edit-last`는 bot이 그 PR에 남긴 마지막 코멘트를 고친다. 지금은 PR에 코멘트를 다는 다른 워크플로가 없다

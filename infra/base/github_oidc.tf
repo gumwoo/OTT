@@ -88,7 +88,8 @@ resource "aws_iam_role_policy" "deploy" {
   policy = data.aws_iam_policy_document.deploy[0].json
 }
 
-# 정책 배포 job 전용. KVS 갱신만 할 수 있고, GitHub environment "policy"에서 돈 job만 받는다 (design.md §8)
+# 정책 배포 job 전용. KVS 갱신만 할 수 있고, GitHub environment "policy"에서 돈 job만 받는다 (design.md §8).
+# environment sub에는 브랜치가 없다. main만 쓰게 하는 것은 environment의 배포 브랜치 규칙이다 (docs/aws.md)
 data "aws_iam_policy_document" "policy_deploy_trust" {
   count = local.enable_github_oidc ? 1 : 0
 

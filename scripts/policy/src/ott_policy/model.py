@@ -45,14 +45,32 @@ def load_dir(directory: Path) -> dict[str, Policy]:
         return policies
     for path in sorted(directory.glob("*.y*ml")):
         try:
-            policy = parse(path.stem, yaml.safe_load(path.read_text(encoding="utf-8")))
-        except (PolicyError, yaml.YAMLError) as e:
+            policy = parse(path.stem, yaml.load(path.read_text(encoding="utf-8"), _StrictLoader))  # noqa: S506 - SafeLoader 하위 클래스
+        except (PolicyError, yaml.YAMLError, UnicodeDecodeError) as e:
             problems.append(f"{path.name}: {e}")
+            continue
+        if policy.content_id in policies:
+            problems.append(f"{path.name}: {policy.content_id} is defined twice")
             continue
         policies[policy.content_id] = policy
     if problems:
         raise PolicyError("\n".join(problems))
     return policies
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """같은 키가 두 번 나오면 뒤엣것으로 덮어쓰지 않고 실패한다."""
+
+
+def _mapping(loader: _StrictLoader, node: yaml.MappingNode) -> dict[Any, Any]:
+    keys = [loader.construct_object(key) for key, _ in node.value]
+    duplicates = sorted({str(key) for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise PolicyError(f"duplicate keys: {', '.join(duplicates)}")
+    return loader.construct_mapping(node)
+
+
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 
 def parse(stem: str, document: Any) -> Policy:
@@ -68,6 +86,9 @@ def parse(stem: str, document: Any) -> Policy:
         raise PolicyError("rights must be a mapping of country codes")
     rights: dict[str, tuple[int, int]] = {}
     for country, period in raw_rights.items():
+        # YAML 1.1은 따옴표 없는 NO(노르웨이)를 false로 읽는다
+        if not isinstance(country, str):
+            raise PolicyError(f"quote the country code {country!r} (e.g. 'NO')")
         if country not in COUNTRIES:
             raise PolicyError(f"unknown ISO 3166-1 alpha-2 code {country!r}")
         rights[country] = _period(country, period)
