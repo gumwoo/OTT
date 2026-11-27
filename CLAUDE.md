@@ -22,7 +22,7 @@
 |---|---|
 | api | `./gradlew check` (spring-javaformat, Checkstyle, ArchUnit, 테스트. Docker 필요) |
 | web | `npm run format:check && npm run lint && npm run typecheck && npm test` |
-| transcoder, scripts/admin | `uv run ruff check && uv run ruff format --check && uv run mypy src tests && uv run pytest` |
+| transcoder, scripts/admin, scripts/policy | `uv run ruff check && uv run ruff format --check && uv run mypy src tests && uv run pytest` |
 | infra | `terraform fmt -check -recursive`, tflint, trivy (명령은 `.github/workflows/ci.yml` 참고) |
 | measure, media | `node --test measure/test/*.test.mjs`, `bash media/test/seed_test.sh` |
 

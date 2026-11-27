@@ -42,6 +42,19 @@ done
 - `/content/*`는 api 키(`aws-signing`)만, `/content/test-*`는 테스트 키만 신뢰한다 (design.md §5)
 - 키 ID는 base apply 뒤 `terraform -chdir=infra/base output -raw signing_key_pair_id`. `deploy/eks/up.sh`가 직접 읽는다
 
+## 정책 배포 연결 (base apply 뒤 한 번)
+
+`.github/workflows/policy.yml`의 deploy job은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다.
+
+```bash
+gh api -X PUT repos/gumwoo/OTT/environments/policy > /dev/null    # 역할 신뢰 조건이 environment:policy다
+gh variable set POLICY_DEPLOY_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw policy_deploy_role_arn)"
+gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw policy_store_arn)"
+```
+
+- 역할은 base tfvars에 `github_repo`를 넣어야 만들어진다
+- 첫 배포는 `policies/`를 바꾼 PR을 main에 merge하거나, Actions에서 policy 워크플로를 다시 실행한다
+
 ## 생성
 
 ```bash

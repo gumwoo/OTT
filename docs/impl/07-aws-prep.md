@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), (7-3 Edge 정책)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), (7-4 정책 파이프라인)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -14,7 +14,7 @@
 | 7-2 1단계 Terraform (EKS·RDS·VPC, plan까지) | 아래 |
 | 7-2b EKS 배포 (차트 values, TargetGroupBinding, 컨트롤러) | 아래 |
 | 7-3 국가별 Edge 정책 함수 | 아래 |
-| 7-4 정책 배포 파이프라인 | 예정 |
+| 7-4 정책 배포 파이프라인 | 아래 |
 | 7-5 실험 측정 도구 | 예정 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
@@ -238,7 +238,7 @@ trivy MEDIUM(CI는 HIGH 이상만 막는다)으로 남긴 것: 컨트롤 플레�
 
 - 7-3에서 처리: CloudFront 서명 키와 key group, `up.sh`가 키 ID를 base 출력에서 읽는다
 
-## 7-3 국가별 Edge 정책
+## 7-3 국가별 Edge 정책 (#55)
 
 ### 1. 만든 것
 
@@ -299,3 +299,61 @@ ego-browser로 확인 (CloudFront 개발자 가이드):
 
 - 실제 CloudFront: 서명 검증과 함수의 실행 순서(design §12 "만료 Cookie + 금지 국가"), 국가 헤더가 함수에 보이는지, KVS 읽기 실패 때 응답, 함수의 compute utilization
 - 함수가 받는 URI가 정규화된 뒤의 값인지 원래 값인지. 어느 쪽이든 꼴이 맞지 않으면 거부한다
+
+## 7-4 정책 배포 파이프라인
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `policies/*.yaml` | 콘텐츠당 파일 하나. 국가별 `notBefore`·`notAfter`(시간대가 있는 ISO 8601). 시드 4편과 실험용 `test-geo` |
+| `scripts/policy` (`ott-policy`) | `check`: 형식·ISO 3166-1 alpha-2·기간·파일 이름·KVS 값 1KB·PR당 바뀌는 키 49개 이하 검사와 영향 미리보기. `deploy`: KVS에 `UpdateKeys` 한 번 |
+| `.github/workflows/policy.yml` | PR: `check` 결과를 job 요약과 PR 코멘트로. main push: environment `policy`에서 OIDC로 역할을 받아 `deploy`. 저장소 변수가 없으면 건너뛴다 |
+| `infra/base/github_oidc.tf` | `ott-policy-deploy` 역할. 신뢰는 `repo:<저장소>:environment:policy`, 권한은 그 KVS의 `DescribeKeyValueStore`·`GetKey`·`ListKeys`·`UpdateKeys`만 |
+| CI `policy` 잡 | ruff·mypy·pytest와 `policies/` 검사 |
+
+### 2. 흐름
+
+`deploy`(design.md §8 순서):
+
+1. `DescribeKeyValueStore`로 ETag를 먼저 읽는다
+2. `_deploy`(`{"rev","commit","at"}`)를 읽어 `rev + 1`을 이번 순번으로. 마지막 배포 커밋이 이번 커밋의 조상이 아니면 멈춘다(`git merge-base --is-ancestor`)
+3. `ListKeys`로 지금 `policy:*`를 읽어 **내용(rights)이 다른 키만** 새 `rev`로 put, `policies/`에 없는 키는 delete
+4. 바뀐 것이 없으면 쓰지 않는다. 있으면 `_deploy`와 함께 `UpdateKeys(IfMatch=ETag)` 한 번. 409·412면 다시 실행하라고 끝낸다
+
+롤백은 이전 내용을 되살리는 revert PR이고, 같은 경로로 **새 rev**가 된다.
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| 역할 신뢰 조건 미정 | GitHub environment `policy` | 브랜치 조건보다 좁다. 필요하면 environment에 승인자를 붙여 배포 전 승인을 받을 수 있다 | aws.md |
+| 배포 뒤 synthetic 검증 | 7-5 측정 도구로 넘김 | 국가별 출발 IP가 필요하다 | design.md §8 |
+
+### 4. 구현하면서 정한 것
+
+ego-browser로 확인 (CloudFront 문서):
+
+- KeyValueStore API는 SigV4A로 서명한다. Python은 `boto3[crt]`(awscrt)가 있어야 한다. 임시 자격 증명은 v2 세션 토큰이어야 해서 리전 STS를 쓴다(`configure-aws-credentials`의 `aws-region`)
+- `UpdateKeys`는 `If-Match`에 `DescribeKeyValueStore`의 ETag를 받는다. IAM 동작 이름은 `cloudfront-keyvaluestore:*`
+
+그 밖에:
+
+- YAML의 따옴표 없는 시각은 PyYAML이 datetime으로 바꾸면서 시간대를 잃을 수 있어서 문자열만 받는다
+- KVS 값 크기는 `rev`가 가장 길 때(2^31-1)로 잰다. 국가 38개면 1KB를 넘는다(테스트)
+- 같은 내용이면 rev가 달라도 다시 쓰지 않는다. `policy:{id}.rev`는 "그 키가 마지막으로 바뀐 배포 순번"이 된다
+- PR 단계의 "바뀌는 키 수"는 base 브랜치의 `policies/`와 내용으로 비교한다
+
+### 5. 검증
+
+검증한 것:
+
+- `scripts/policy` ruff·mypy strict·pytest 21개. 형식 오류 9가지, 1KB 초과, 바뀐 키만 쓰기·지운 키 delete, 다음 rev와 `_deploy`, 롤백이 새 rev, 오래된 커밋 거부, 변경 없음, 영향 미리보기 문구, 49개 초과 PR 거부
+- `KvsStore`를 botocore `Stubber`로 감싸 요청·응답이 서비스 모델과 맞는지 확인(`IfMatch`, `Puts`, `Deletes`, `ListKeys` 페이지, 404 → 없음, 409 → 재실행 안내)
+- `ott-policy check --policies policies`: 정책 5개 통과, 미리보기 출력
+- base `terraform validate`, tflint, actionlint, `gh pr comment --edit-last --create-if-none` 옵션 존재(gh 2.95.0)
+
+검증하지 못한 것:
+
+- 실제 KVS: SigV4A 서명, `UpdateKeys` 409 응답 모양, 엣지 전파 시간(E5)
+- 워크플로 실행: PR 코멘트 권한, OIDC 역할 맡기(environment sub 조건)

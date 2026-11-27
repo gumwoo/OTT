@@ -554,6 +554,7 @@ rev 14  롤백 = 내용 X를 새 순번으로 배포
 - `_deploy`는 감사와 배포 추적용이다. "엣지에 무엇이 나가 있는가"는 `_deploy`가 아니라 **Function이 읽은 rev와 요청 결과**로 판단한다.
 - 거부 응답에는 Function이 읽은 `rev`를 응답 헤더로 넣어서 synthetic 클라이언트가 기록한다. 허용 응답(origin을 거쳐 나가는 응답)에 같은 값을 실을 방법은 viewer response 단계에서 다시 확인한다. [확인 필요]
 - 자동 롤백은 수동 롤백의 복구 시간과 위험을 측정한 뒤에 도입 여부를 판단한다.
+- 구현 (2026-11-27): `scripts/policy`(`ott-policy check`·`deploy`), `.github/workflows/policy.yml`, base의 `ott-policy-deploy` 역할(GitHub environment `policy`에서 도는 job만 맡는다, KVS 4개 동작만). 배포 뒤 synthetic 검증은 측정 도구(7-5)가 한다. 기록은 docs/impl/07-aws-prep.md 7-4.
 
 ---
 

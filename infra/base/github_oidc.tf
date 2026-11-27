@@ -87,3 +87,56 @@ resource "aws_iam_role_policy" "deploy" {
   role   = aws_iam_role.deploy[0].id
   policy = data.aws_iam_policy_document.deploy[0].json
 }
+
+# 정책 배포 job 전용. KVS 갱신만 할 수 있고, GitHub environment "policy"에서 돈 job만 받는다 (design.md §8)
+data "aws_iam_policy_document" "policy_deploy_trust" {
+  count = local.enable_github_oidc ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [local.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_repo}:environment:policy"]
+    }
+  }
+}
+
+resource "aws_iam_role" "policy_deploy" {
+  count = local.enable_github_oidc ? 1 : 0
+
+  name               = "${var.project}-policy-deploy"
+  assume_role_policy = data.aws_iam_policy_document.policy_deploy_trust[0].json
+}
+
+data "aws_iam_policy_document" "policy_deploy" {
+  statement {
+    actions = [
+      "cloudfront-keyvaluestore:DescribeKeyValueStore",
+      "cloudfront-keyvaluestore:GetKey",
+      "cloudfront-keyvaluestore:ListKeys",
+      "cloudfront-keyvaluestore:UpdateKeys",
+    ]
+    resources = [aws_cloudfront_key_value_store.policies.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "policy_deploy" {
+  count = local.enable_github_oidc ? 1 : 0
+
+  name   = "${var.project}-policy-deploy"
+  role   = aws_iam_role.policy_deploy[0].id
+  policy = data.aws_iam_policy_document.policy_deploy.json
+}
