@@ -2,6 +2,9 @@
 budget_email       = "you@example.com"
 monthly_budget_usd = 30
 
+# compute 스택과 api 배포가 끝난 뒤 true. 이 값을 빠뜨리고 apply하면 /api/*가 503으로 돌아간다
+enable_api = false
+
 # GitHub Actions OIDC 배포 역할을 쓸 때만 설정한다.
 # github_repo = "gumwoo/OTT"
 

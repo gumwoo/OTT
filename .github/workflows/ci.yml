@@ -193,13 +193,16 @@ jobs:
           terraform_version: "1.16.5"
           terraform_wrapper: false
       - run: terraform fmt -check -recursive
-      - run: terraform init -backend=false -lockfile=readonly -input=false
-        working-directory: infra/base
-      - run: terraform validate
-        working-directory: infra/base
-      - run: docker run --rm -v "$PWD:/data" -w /data/base "$TFLINT_IMAGE" --config=/data/.tflint.hcl
+      - run: |
+          for stack in base compute; do
+            (cd "$stack" && terraform init -backend=false -lockfile=readonly -input=false && terraform validate)
+          done
+      - run: |
+          for stack in base compute; do
+            docker run --rm -v "$PWD:/data" -w "/data/$stack" "$TFLINT_IMAGE" --config=/data/.tflint.hcl
+          done
       # trivy-action은 2026-03 공급망 침해 이력이 있어 이미지 digest로 고정한다 (GHSA-69fq-xp46-6x23)
-      - run: docker run --rm -v "$PWD:/data" -w /data "$TRIVY_IMAGE" config --exit-code 1 --severity HIGH,CRITICAL --ignorefile .trivyignore base
+      - run: docker run --rm -v "$PWD:/data" -w /data "$TRIVY_IMAGE" config --exit-code 1 --severity HIGH,CRITICAL --ignorefile .trivyignore .
 
   scripts:
     needs: changes

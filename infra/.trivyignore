@@ -3,3 +3,12 @@ AWS-0011
 
 # SSE-KMS CMK: SSE-S3로 충분하다. CMK는 키 비용과 OAC용 KMS 정책이 추가로 든다
 AWS-0132
+
+# ALB HTTP 리스너: CloudFront와는 VPC origin(사설 연결)으로만 닿는다. 첫 연결을 HTTP로 확인한 뒤 HTTPS로 바꾼다 (ADR-0011)
+AWS-0054
+
+# EKS secret 암호화(CMK): 1.28 이상은 AWS 소유 키로 기본 envelope 암호화된다 (EKS 사용자 가이드 "Default envelope encryption")
+AWS-0039
+
+# EKS 공개 엔드포인트: 작업 PC 공인 IP로만 연다. 0.0.0.0/0은 cluster_endpoint_public_access_cidrs validation이 막는다
+AWS-0040
