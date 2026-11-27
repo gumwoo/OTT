@@ -1,0 +1,52 @@
+[project]
+name = "ott-policy"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    # KVS API는 SigV4A로 서명한다. boto3가 awscrt를 써야 한다
+    "boto3[crt]>=1.35.2",
+    "pycountry==26.2.16",
+    "pyyaml==6.0.3",
+]
+
+[project.scripts]
+ott-policy = "ott_policy.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "ruff==0.17.5",
+    "types-boto3[cloudfront-keyvaluestore]==1.44.6",
+    "types-pyyaml==6.0.12.20261113",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "ott_policy"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# transcoder와 같은 규칙 (PY-02)
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "BLE", "S", "PTH", "TRY", "C4", "PL"]
+ignore = ["TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S106", "PLR2004"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["pycountry"]
+follow_untyped_imports = true
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+strict = true

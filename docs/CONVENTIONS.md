@@ -188,7 +188,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 |---|---|---|---|---|
 | GA-01 | 서드파티 action은 commit SHA로 고정하고 주석에 버전 | 공식(GitHub secure use) | 리뷰 + Dependabot | P |
 | GA-02 | 워크플로 기본 `permissions: contents: read`. OIDC가 필요한 job에만 `id-token: write` | 공식(GitHub OIDC) | actionlint + 리뷰 | P |
-| GA-03 | 배포 역할 trust policy에 `aud`·`sub` 조건 (저장소 + 브랜치) | 공식 | Terraform | D |
+| GA-03 | 배포 역할 trust policy에 `aud`·`sub` 조건 (저장소 + 브랜치). environment로 받을 때는 `sub`가 `environment:<이름>`이고 브랜치가 없으므로, 그 environment의 배포 브랜치를 `main`으로 제한한다 (AWS의 GitHub OIDC 조건 키는 `aud`·`sub`·`amr`뿐) | 공식 | Terraform + environment 설정 | D |
 | GA-04 | 워크플로 문법 검사 | 기여자(actionlint) | actionlint | C, P |
 
 ## 10. 검사 시점

@@ -22,6 +22,7 @@ jobs:
       infra: ${{ steps.diff.outputs.infra }}
       scripts: ${{ steps.diff.outputs.scripts }}
       admin: ${{ steps.diff.outputs.admin }}
+      policy: ${{ steps.diff.outputs.policy }}
       deploy: ${{ steps.diff.outputs.deploy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +46,7 @@ jobs:
             done
             echo "scripts=$(has '(measure|media)')"
             echo "admin=$(has '(scripts/admin|deploy)')"
+            echo "policy=$(has '(scripts/policy|policies)')"
             echo "deploy=$(has deploy)"
           } >> "$GITHUB_OUTPUT"
 
@@ -155,6 +157,25 @@ jobs:
           docker run --rm -i -v "$GITHUB_WORKSPACE/deploy/policy:/policy" openpolicyagent/conftest:v0.71.1@sha256:0e77cdf7c1fcde035f3c579e4aaa6664ee2a8be5777eaa9af9f520cdd02280c0 \
             test -p /policy - < "$RUNNER_TEMP/job.yaml"
 
+  policy:
+    needs: changes
+    if: needs.changes.outputs.policy == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: scripts/policy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.0"
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy src tests
+      - run: uv run pytest
+      - run: uv run ott-policy check --policies ../../policies
+
   deploy:
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
@@ -238,7 +259,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [changes, api, web, transcoder, admin, deploy, infra, scripts]
+    needs: [changes, api, web, transcoder, admin, policy, deploy, infra, scripts]
     runs-on: ubuntu-24.04
     steps:
       - name: all required jobs passed or skipped

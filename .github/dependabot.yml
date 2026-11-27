@@ -61,3 +61,12 @@ updates:
     groups:
       uv:
         patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /scripts/policy
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      uv:
+        patterns: ["*"]

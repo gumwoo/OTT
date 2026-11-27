@@ -42,6 +42,24 @@ done
 - `/content/*`는 api 키(`aws-signing`)만, `/content/test-*`는 테스트 키만 신뢰한다 (design.md §5)
 - 키 ID는 base apply 뒤 `terraform -chdir=infra/base output -raw signing_key_pair_id`. `deploy/eks/up.sh`가 직접 읽는다
 
+## 정책 배포 연결 (base apply 뒤 한 번)
+
+`.github/workflows/policy.yml`의 deploy job은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다.
+
+```bash
+# 역할 신뢰 조건이 environment:policy다. sub에 브랜치가 없으므로 environment가 main만 받게 한다 (GA-03)
+gh api -X PUT repos/gumwoo/OTT/environments/policy --input - > /dev/null << 'EOF'
+{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+EOF
+gh api -X POST repos/gumwoo/OTT/environments/policy/deployment-branch-policies -f name=main -f type=branch > /dev/null
+gh variable set POLICY_DEPLOY_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw policy_deploy_role_arn)"
+gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw policy_store_arn)"
+```
+
+- 역할은 base tfvars에 `github_repo`를 넣어야 만들어진다
+- 첫 배포나 실패 뒤 다시 반영은 `gh workflow run policy.yml --ref main`
+- environment 규칙이 없으면 같은 저장소의 PR 브랜치가 워크플로를 고쳐 이 역할을 맡을 수 있다. 위 두 번째 명령을 빼먹지 않는다
+
 ## 생성
 
 ```bash

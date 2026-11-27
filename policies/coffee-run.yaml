@@ -1,0 +1,11 @@
+contentId: coffee-run
+rights:
+  KR:
+    notBefore: "2026-01-01T00:00:00+09:00"
+    notAfter: "2028-01-01T00:00:00+09:00"
+  ID:
+    notBefore: "2026-01-01T00:00:00+07:00"
+    notAfter: "2028-01-01T00:00:00+07:00"
+  US:
+    notBefore: "2026-01-01T00:00:00-05:00"
+    notAfter: "2028-01-01T00:00:00-05:00"

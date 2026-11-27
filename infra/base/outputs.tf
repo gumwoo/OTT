@@ -57,3 +57,8 @@ output "github_deploy_role_arn" {
   description = "GitHub Actions 배포 역할 ARN (github_repo가 없으면 null)"
   value       = local.enable_github_oidc ? aws_iam_role.deploy[0].arn : null
 }
+
+output "policy_deploy_role_arn" {
+  description = "정책 배포 job이 맡는 역할 ARN (github_repo가 없으면 null). 저장소 변수 POLICY_DEPLOY_ROLE_ARN"
+  value       = local.enable_github_oidc ? aws_iam_role.policy_deploy[0].arn : null
+}
