@@ -11,11 +11,11 @@ transcoder = "transcoder.main:main"
 
 [dependency-groups]
 dev = [
-    "moto[s3]==5.2.5",
+    "moto[s3]==5.2.6",
     "mypy==2.4.1",
     "pytest==9.2.0",
-    "ruff==0.17.5",
-    "types-boto3[s3]==1.44.6",
+    "ruff==0.17.6",
+    "types-boto3[s3]==1.44.10",
 ]
 
 [build-system]
