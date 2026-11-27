@@ -393,10 +393,10 @@ AWS 없이 "원본 등록 → 변환 → 게시 → 재생" 전체를 돌리려�
 | 원본 읽기 | transcoder | 로컬 source 디렉터리 | S3 source 버킷 |
 | 버전 경로가 비었는지 확인 | transcoder | 디렉터리 존재·파일 유무 | `ListObjectsV2` (prefix) |
 | 산출물 업로드 | transcoder | 로컬 content 디렉터리 | S3 content `PutObject(If-None-Match: *)` |
-| manifest 읽기·segment 존재 확인 | API (publish 검증) | 로컬 content 디렉터리 | S3 content `GetObject`·`HeadObject` |
+| manifest 읽기·segment 존재 확인 | API (publish 검증) | 로컬 content 디렉터리 | S3 content `ListObjectsV2`(버전 prefix 한 번) + playlist `GetObject` |
 | 영상 HTTP 재생 | 브라우저 | content-server | CloudFront |
 
-- **로컬 업로드 구현도 "이미 있으면 실패"를 흉내 낸다.** 파일을 배타적 생성 모드로 열어서(이미 있으면 오류) S3의 412와 같은 의미로 다룬다. 그래야 `VERSION_DIRTY` 로직을 로컬에서도 테스트할 수 있다.
+- **로컬 업로드 구현도 "이미 있으면 실패"를 흉내 낸다.** 파일을 배타적 생성 모드로 열어서(이미 있으면 오류) S3의 412처럼 다룬다. S3 구현은 412 뒤 내용이 같으면 성공으로 보지만(design.md §4), 로컬은 같은 내용이어도 실패한다. 그래야 `VERSION_DIRTY` 로직을 로컬에서도 테스트할 수 있다.
 - API의 로컬 구현과 transcoder의 로컬 구현은 같은 디렉터리를 마운트해서 쓴다.
 
 ## 11. 테스트
@@ -459,6 +459,7 @@ AWS 없이 할 수 있는 것부터 한다.
 4. `transcoder`: 로컬 모드로 변환 → 검증 → 게시 흐름
 5. 운영자 CLI
 6. kind에서 TokenReview·RBAC·Job 실패 시나리오 확인
-7. 여기까지 로컬에서 돌아가면 design.md의 실험 단계(AWS)로 넘어간다
+7. AWS 단계에서 쓸 코드를 로컬에서 끝낸다: S3 저장소 어댑터, 1단계 Terraform(EKS·RDS·VPC, plan까지), 국가별 Edge 정책 함수, 정책 배포 파이프라인, 실험 측정 도구
+8. 여기까지 로컬에서 돌아가면 design.md의 실험 단계(AWS)로 넘어간다
 
 design.md의 0~4단계는 **AWS 실험 순서**로 유지한다. 앱 개발은 그 전에 로컬에서 진행한다.

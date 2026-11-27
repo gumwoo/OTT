@@ -41,7 +41,7 @@ AWS 없이 로컬에서 "원본 등록 → 변환 → 게시 → 재생"까지 �
 | 영역 | 내용 |
 |---|---|
 | 앱 | 가입·로그인(세션, CSRF), 모의 구독, 카탈로그, HLS 재생과 Signed Cookie 발급, QoE 보고. Signed Cookie 검증은 CloudFront가 있어야 해서 AWS 단계에서 확인한다 |
-| 변환 Job | FFmpeg 4단 화질 변환 → 로컬 검증 → 덮어쓰지 않는 버전 경로에 업로드 → API에 게시 요청. heartbeat를 보내고 SIGTERM을 받으면 `FAILED`를 보고한다 |
+| 변환 Job | FFmpeg 4단 화질 변환 → 로컬 검증 → 덮어쓰지 않는 버전 경로에 업로드 → API에 게시 요청. heartbeat를 보내고 SIGTERM을 받으면 `FAILED`를 보고한다. 저장소는 로컬 디렉터리와 S3 두 가지이고, S3 쪽은 S3 에뮬레이터(moto)로 확인했다 |
 | 운영자 CLI | 콘텐츠 등록, 변환 요청과 실행(`docker run` 또는 `kubectl create`), 상태 확인, 롤백 |
 | 로컬 Kubernetes (kind) | api를 운영 프로필로 띄우고, Job 토큰을 TokenReview로 확인한다(`transcoder` ServiceAccount만 통과). PSS restricted 네임스페이스, `tokenreviews create`만 주는 RBAC, 운영 CronJob(보고 없이 죽은 작업 확정, 미완성 버전 정리) |
 

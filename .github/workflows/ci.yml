@@ -140,10 +140,15 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run mypy src tests
       - run: uv run pytest
-      # K8-08 스키마, K8 정책(deploy/policy): 운영자 CLI가 그리는 Job 매니페스트
+      # K8-08 스키마, K8 정책(deploy/policy): 운영자 CLI가 그리는 Job 매니페스트 (로컬 PVC, AWS S3)
       - run: |
-          uv run ott-admin manifest --job-json tests/fixtures/job.json \
-            --job-api-url http://ott-api.ott.svc:8080 --template ../../deploy/jobs/transcode-job.yaml > "$RUNNER_TEMP/job.yaml"
+          common=(--job-json tests/fixtures/job.json --job-api-url http://ott-api.ott.svc:8080)
+          {
+            uv run ott-admin manifest "${common[@]}" --template ../../deploy/jobs/transcode-job.yaml
+            echo ---
+            uv run ott-admin manifest "${common[@]}" --template ../../deploy/jobs/transcode-job-s3.yaml \
+              --storage s3 --source-bucket ott-source --content-bucket ott-content
+          } > "$RUNNER_TEMP/job.yaml"
       - run: |
           docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0@sha256:85dbef6b4b312b99133decc9c6fc9495e9fc5f92293d4ff3b7e1b30f5611823c \
             -strict -summary -kubernetes-version 1.35.0 - < "$RUNNER_TEMP/job.yaml"

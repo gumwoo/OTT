@@ -152,7 +152,7 @@ AI가 쓴 코드는 주석이 길고 설명조라서 티가 난다. 사람이 �
 | PY-05 | subprocess는 인자 리스트, `shell=True`·`preexec_fn` 금지 | 공식(subprocess) | Ruff `S602`·`S604` | F, P |
 | PY-06 | SIGTERM 핸들러를 메인 스레드에서 등록하고, 핸들러는 stop 이벤트만 설정. ffmpeg 자식은 직접 종료 | 공식(signal, pid_namespaces) | 테스트 (SIGTERM 시 자식 종료 확인) | P |
 | PY-07 | 컨테이너 진입점은 exec 형식으로 Python을 직접 실행. 셸 래퍼 금지 | 공식(K8s, Linux) | Dockerfile 리뷰 + 테스트 | P |
-| PY-08 | S3 업로드는 `put_object(IfNoneMatch="*")`. `upload_file` 금지. 412는 HTTP 상태 코드로 판별 | 공식(boto3 문서·소스) | 테스트(FakeStorage) | P |
+| PY-08 | S3 업로드는 `put_object(IfNoneMatch="*")`. `upload_file` 금지. 412는 HTTP 상태 코드로 판별 | 공식(boto3 문서·소스) | 테스트(moto, `test_s3_storage.py`) | P |
 | PY-09 | heartbeat는 non-daemon 스레드 + `threading.Event`. `finally`에서 반드시 stop·join | 공식(threading) | 테스트 | P |
 | PY-10 | 로그는 stdout 한 줄 JSON. `PYTHONUNBUFFERED=1` | 공식(logging, uv 예제) | 리뷰 | P |
 

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from transcoder.errors import ConfigError
 from transcoder.job import JobSpec
+from transcoder.storage import LocalStorage, S3Storage, Storage
 
 DEFAULT_HEARTBEAT_SECONDS = 15.0
 
@@ -15,8 +16,7 @@ class Config:
     spec: JobSpec
     api_url: str
     token: Callable[[], str]
-    source_root: Path
-    content_root: Path
+    storage: Callable[[], Storage]
     work_dir: Path
     heartbeat_seconds: float
 
@@ -52,8 +52,7 @@ def from_env(env: Mapping[str, str]) -> Config:
         ),
         api_url=api_url,
         token=_token(env),
-        source_root=Path(required("SOURCE_ROOT")),
-        content_root=Path(required("CONTENT_ROOT")),
+        storage=_storage(env, required),
         work_dir=Path(required("WORK_DIR")),
         heartbeat_seconds=heartbeat_seconds,
     )
@@ -71,3 +70,15 @@ def _token(env: Mapping[str, str]) -> Callable[[], str]:
     if not token:
         raise ConfigError("JOB_TOKEN_FILE or JOB_TOKEN is required")
     return lambda: token
+
+
+def _storage(env: Mapping[str, str], required: Callable[[str], str]) -> Callable[[], Storage]:
+    kind = env.get("STORAGE", "local").strip()
+    if kind == "local":
+        source_root, content_root = Path(required("SOURCE_ROOT")), Path(required("CONTENT_ROOT"))
+        return lambda: LocalStorage(source_root, content_root)
+    if kind == "s3":
+        source, content = required("SOURCE_BUCKET"), required("CONTENT_BUCKET")
+        endpoint = env.get("S3_ENDPOINT_URL", "").strip() or None
+        return lambda: S3Storage(source, content, endpoint)
+    raise ConfigError("STORAGE must be local or s3")

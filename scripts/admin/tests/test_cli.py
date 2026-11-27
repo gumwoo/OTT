@@ -7,7 +7,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import boto3
 import pytest
+from moto import mock_aws
 
 from ott_admin import cli
 from ott_admin.client import AdminApiError, AdminClient
@@ -201,3 +203,39 @@ def test_wait_gives_up_when_the_job_never_finishes(api: tuple[FakeAdminApi, str]
     code = cli.main([*args, "--wait-timeout", "0"])
 
     assert code == cli.EXIT_FAILED
+
+
+def test_s3_transcode_uploads_the_source_before_registering(
+    api: tuple[FakeAdminApi, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state, url = api
+    (tmp_path / "spring.webm").write_bytes(b"video")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
+    args = ["--api", url, "transcode", "spring", "spring.webm", "--runner", "none"]
+    s3 = ["--storage", "s3", "--source-bucket", "ott-source", "--content-bucket", "ott-content"]
+
+    with mock_aws():
+        client = boto3.client("s3")
+        client.create_bucket(
+            Bucket="ott-source",
+            CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"},
+        )
+        code = cli.main([*args, *s3, "--source-root", str(tmp_path)])
+        body = client.get_object(Bucket="ott-source", Key="spring.webm")["Body"].read()
+
+    assert code == 0
+    assert body == b"video"
+    assert state.registered()
+
+
+def test_s3_storage_needs_both_buckets(api: tuple[FakeAdminApi, str], tmp_path: Path) -> None:
+    state, url = api
+    (tmp_path / "spring.webm").write_bytes(b"video")
+    args = ["--api", url, "transcode", "spring", "spring.webm", "--runner", "none"]
+
+    code = cli.main([*args, "--storage", "s3", "--source-root", str(tmp_path)])
+
+    assert code == cli.EXIT_FAILED
+    assert not state.registered()

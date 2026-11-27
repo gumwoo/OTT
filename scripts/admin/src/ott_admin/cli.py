@@ -1,6 +1,5 @@
 import argparse
 import getpass
-import hashlib
 import io
 import json
 import os
@@ -12,19 +11,26 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from ott_admin.client import AdminApiError, AdminClient
 from ott_admin.runners import (
     DockerOptions,
     JobRun,
     KubernetesOptions,
+    S3Options,
     docker_command,
     render_manifest,
 )
+from ott_admin.source import s3_client, sha256_hex, upload_source
 
 TERMINAL = {"PUBLISHED", "PUBLISHED_SUPERSEDED", "FAILED"}
 DONE = {"PUBLISHED", "PUBLISHED_SUPERSEDED"}
 POLL_SECONDS = 5.0
-HASH_CHUNK_BYTES = 1024 * 1024
+TEMPLATES = {
+    "local": Path("deploy/jobs/transcode-job.yaml"),
+    "s3": Path("deploy/jobs/transcode-job-s3.yaml"),
+}
 EXIT_FAILED = 1
 
 
@@ -46,7 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AdminApiError as e:
         print(f"api error: {e}", file=sys.stderr)
         return EXIT_FAILED
-    except (OSError, ValueError, subprocess.CalledProcessError) as e:
+    except (OSError, ValueError, subprocess.CalledProcessError, ClientError, BotoCoreError) as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_FAILED
     return result
@@ -67,10 +73,17 @@ def _add_content(client: AdminClient, args: argparse.Namespace) -> int:
 
 
 def _transcode(client: AdminClient, args: argparse.Namespace) -> int:
-    source_hash = _sha256(args.source_root / args.source_key)
+    source = args.source_root / args.source_key
+    source_hash = sha256_hex(source)
+    s3 = _s3_options(args)
     if args.runner == "kubectl":
         # 등록하면 버전이 소모되므로 매니페스트를 그릴 수 있는지 먼저 본다
         render_manifest(_preview(args, source_hash), _kubernetes_options(args))
+    if s3 is not None:
+        uploaded = upload_source(
+            s3_client(s3.endpoint_url or None, s3.region), s3.source_bucket, args.source_key, source
+        )
+        _print({"source": f"s3://{s3.source_bucket}/{args.source_key}", "uploaded": uploaded})
     run = JobRun.from_api(
         client.register_job(args.content_id, args.source_key, source_hash, args.profile)
     )
@@ -82,6 +95,7 @@ def _transcode(client: AdminClient, args: argparse.Namespace) -> int:
             job_token=args.job_token,
             source_root=args.source_root,
             content_root=args.content_root,
+            s3=_docker_s3(s3),
         )
         # transcoder가 FAILED를 보고하지 못한 경우(이미지 없음, 설정 오류)도 실패로 본다
         docker = subprocess.run(docker_command(run, options), check=False)  # noqa: S603
@@ -148,12 +162,28 @@ def _preview(args: argparse.Namespace, source_hash: str) -> JobRun:
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        while chunk := file.read(HASH_CHUNK_BYTES):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _s3_options(args: argparse.Namespace) -> S3Options | None:
+    if args.storage == "local":
+        return None
+    if not args.source_bucket or not args.content_bucket:
+        raise ValueError("--source-bucket and --content-bucket are required for --storage s3")
+    return S3Options(
+        source_bucket=args.source_bucket,
+        content_bucket=args.content_bucket,
+        region=args.region,
+        endpoint_url=args.s3_endpoint or "",
+    )
+
+
+def _docker_s3(s3: S3Options | None) -> S3Options | None:
+    if s3 is None or not s3.endpoint_url:
+        return s3
+    return S3Options(
+        source_bucket=s3.source_bucket,
+        content_bucket=s3.content_bucket,
+        region=s3.region,
+        endpoint_url=_docker_api_url(s3.endpoint_url),
+    )
 
 
 def _credentials() -> tuple[str, str]:
@@ -181,7 +211,7 @@ def _kubernetes_options(args: argparse.Namespace) -> KubernetesOptions:
             "--job-api-url is required for kubernetes (the api address inside the cluster)"
         )
     return KubernetesOptions(
-        template=args.template,
+        template=args.template or TEMPLATES[args.storage],
         image=args.image,
         api_url=args.job_api_url,
         namespace=args.namespace,
@@ -190,6 +220,7 @@ def _kubernetes_options(args: argparse.Namespace) -> KubernetesOptions:
         active_deadline_seconds=args.deadline,
         source_claim=args.source_claim,
         content_claim=args.content_claim,
+        s3=_s3_options(args),
     )
 
 
@@ -253,7 +284,9 @@ def _parser() -> argparse.ArgumentParser:
 def _kubernetes_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--image", default="ott-transcoder:local")
     parser.add_argument("--job-api-url", help="Job 안에서 본 api 주소")
-    parser.add_argument("--template", type=Path, default=Path("deploy/jobs/transcode-job.yaml"))
+    parser.add_argument(
+        "--template", type=Path, help="기본: --storage local이면 transcode-job.yaml, s3면 -s3.yaml"
+    )
     parser.add_argument("--namespace", default="ott")
     parser.add_argument("--context", help="kubectl context")
     parser.add_argument("--work-size", default="3Gi", help="작업 디렉터리 emptyDir 한도")
@@ -263,6 +296,11 @@ def _kubernetes_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--deadline", type=int, default=3600, help="activeDeadlineSeconds")
     parser.add_argument("--source-claim", default="ott-source")
     parser.add_argument("--content-claim", default="ott-content")
+    parser.add_argument("--storage", choices=["local", "s3"], default="local")
+    parser.add_argument("--source-bucket", help="s3: 원본 버킷. transcode는 원본을 여기에 올린다")
+    parser.add_argument("--content-bucket", help="s3: 산출물 버킷")
+    parser.add_argument("--region", default="ap-northeast-2", help="s3: Job의 AWS_REGION")
+    parser.add_argument("--s3-endpoint", help="s3: 로컬 에뮬레이터 주소 (AWS에서는 비운다)")
 
 
 if __name__ == "__main__":

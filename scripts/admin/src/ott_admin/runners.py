@@ -6,6 +6,8 @@ from typing import Any
 
 # 템플릿의 env 값은 큰따옴표 안에 들어간다. 따옴표·역슬래시·줄바꿈이 끼면 YAML이 깨진다
 SAFE_VALUE = re.compile(r"[A-Za-z0-9._/:@-]+")
+# docker 실행 때 호스트의 AWS 자격 증명을 값 없이 이름만 넘긴다 (명령줄에 비밀이 남지 않게)
+AWS_ENV = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
 
 
 @dataclass(frozen=True)
@@ -43,12 +45,21 @@ class JobRun:
 
 
 @dataclass(frozen=True)
+class S3Options:
+    source_bucket: str
+    content_bucket: str
+    region: str
+    endpoint_url: str = ""
+
+
+@dataclass(frozen=True)
 class DockerOptions:
     image: str
     api_url: str
     job_token: str
     source_root: Path
     content_root: Path
+    s3: S3Options | None = None
 
 
 @dataclass(frozen=True)
@@ -62,24 +73,38 @@ class KubernetesOptions:
     active_deadline_seconds: int
     source_claim: str
     content_claim: str
+    s3: S3Options | None = None
 
 
 def docker_command(run: JobRun, options: DockerOptions) -> list[str]:
-    env = {
-        **run.env(options.api_url),
-        "JOB_TOKEN": options.job_token,
-        "SOURCE_ROOT": "/data/source",
-        "CONTENT_ROOT": "/data/content",
-        "WORK_DIR": "/work",
-    }
+    env = {**run.env(options.api_url), "JOB_TOKEN": options.job_token, "WORK_DIR": "/work"}
     command = ["docker", "run", "--rm", "--name", run.k8s_job_name]
     # Linux 호스트에서도 host.docker.internal이 api를 가리키게 한다
     command += ["--add-host=host.docker.internal:host-gateway", "--tmpfs", "/work:uid=999"]
-    command += ["-v", f"{options.source_root.resolve()}:/data/source:ro"]
-    command += ["-v", f"{options.content_root.resolve()}:/data/content"]
+    if options.s3 is None:
+        env |= {"SOURCE_ROOT": "/data/source", "CONTENT_ROOT": "/data/content"}
+        command += ["-v", f"{options.source_root.resolve()}:/data/source:ro"]
+        command += ["-v", f"{options.content_root.resolve()}:/data/content"]
+    else:
+        env |= _s3_env(options.s3)
+        for name in AWS_ENV:
+            command += ["-e", name]
     for name, value in env.items():
         command += ["-e", f"{name}={value}"]
     return [*command, options.image]
+
+
+def _s3_env(s3: S3Options) -> dict[str, str]:
+    env = {
+        "STORAGE": "s3",
+        "SOURCE_BUCKET": s3.source_bucket,
+        "CONTENT_BUCKET": s3.content_bucket,
+        # botocore는 AWS_REGION을 읽지 않는다
+        "AWS_DEFAULT_REGION": s3.region,
+    }
+    if s3.endpoint_url:
+        env["S3_ENDPOINT_URL"] = s3.endpoint_url
+    return env
 
 
 def render_manifest(run: JobRun, options: KubernetesOptions) -> str:
@@ -94,7 +119,16 @@ def render_manifest(run: JobRun, options: KubernetesOptions) -> str:
         "SOURCE_CLAIM": options.source_claim,
         "CONTENT_CLAIM": options.content_claim,
     }
+    if options.s3 is not None:
+        values |= {
+            "SOURCE_BUCKET": options.s3.source_bucket,
+            "CONTENT_BUCKET": options.s3.content_bucket,
+            "AWS_REGION": options.s3.region,
+        }
     unsafe = [name for name, value in values.items() if not SAFE_VALUE.fullmatch(value)]
     if unsafe:
         raise ValueError(f"values not safe for the manifest: {', '.join(sorted(unsafe))}")
-    return Template(options.template.read_text(encoding="utf-8")).substitute(values)
+    try:
+        return Template(options.template.read_text(encoding="utf-8")).substitute(values)
+    except KeyError as e:
+        raise ValueError(f"{options.template} needs {e.args[0]} (wrong --storage?)") from e

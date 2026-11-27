@@ -10,12 +10,17 @@ from ott_admin.runners import (
     DockerOptions,
     JobRun,
     KubernetesOptions,
+    S3Options,
     docker_command,
     render_manifest,
 )
 
 ROOT = Path(__file__).parents[3]
 TEMPLATE = ROOT / "deploy" / "jobs" / "transcode-job.yaml"
+S3_TEMPLATE = ROOT / "deploy" / "jobs" / "transcode-job-s3.yaml"
+S3 = S3Options(source_bucket="ott-source", content_bucket="ott-content", region="ap-northeast-2")
+LOCAL_ONLY = {"SOURCE_ROOT", "CONTENT_ROOT"}
+S3_ONLY = {"SOURCE_BUCKET", "CONTENT_BUCKET"}
 
 RUN = JobRun(
     job_id="0b7e7d2e-5c1e-4c2a-9a55-3f1f5f0d2b10",
@@ -43,8 +48,8 @@ def options(**override: Any) -> KubernetesOptions:
     return KubernetesOptions(**{**values, **override})
 
 
-def manifest(run: JobRun = RUN) -> dict[str, Any]:
-    rendered = render_manifest(run, options())
+def manifest(run: JobRun = RUN, **override: Any) -> dict[str, Any]:
+    rendered = render_manifest(run, options(**override))
     assert "${" not in rendered
     document: dict[str, Any] = yaml.safe_load(rendered)
     return document
@@ -110,15 +115,52 @@ def test_ids_that_look_like_numbers_stay_strings(content_id: str) -> None:
     assert env["CONTENT_ID"] == content_id
 
 
-def test_template_gives_every_setting_the_transcoder_requires() -> None:
+@pytest.mark.parametrize(
+    ("override", "other_storage"),
+    [({}, S3_ONLY), ({"template": S3_TEMPLATE, "s3": S3}, LOCAL_ONLY)],
+)
+def test_template_gives_every_setting_the_transcoder_requires(
+    override: dict[str, Any], other_storage: set[str]
+) -> None:
     config = (ROOT / "transcoder" / "src" / "transcoder" / "config.py").read_text(encoding="utf-8")
     required = set(re.findall(r'required\("([A-Z_]+)"\)', config))
-    pod = manifest()["spec"]["template"]["spec"]
+    pod = manifest(**override)["spec"]["template"]["spec"]
     env = {item["name"] for item in pod["containers"][0]["env"]}
 
-    assert required
-    assert required <= env
+    assert required >= LOCAL_ONLY | S3_ONLY
+    assert required - other_storage <= env
+    assert not other_storage & env
     assert "JOB_TOKEN_FILE" in env
+
+
+def test_s3_template_differs_only_in_storage() -> None:
+    local = manifest()
+    s3 = manifest(template=S3_TEMPLATE, s3=S3)
+    s3_pod = s3["spec"]["template"]["spec"]
+    s3_env = {e["name"]: e["value"] for e in s3_pod["containers"][0]["env"]}
+
+    assert s3_env["STORAGE"] == "s3"
+    assert s3_env["SOURCE_BUCKET"] == "ott-source"
+    assert s3_env["AWS_DEFAULT_REGION"] == "ap-northeast-2"
+    assert s3_pod["serviceAccountName"] == "transcoder"
+
+    def without_storage(job: dict[str, Any]) -> dict[str, Any]:
+        pod = job["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        storage = {"STORAGE", "AWS_DEFAULT_REGION"} | LOCAL_ONLY | S3_ONLY
+        container["env"] = [e for e in container["env"] if e["name"] not in storage]
+        container["volumeMounts"] = [
+            m for m in container["volumeMounts"] if m["name"] not in {"source", "content"}
+        ]
+        pod["volumes"] = [v for v in pod["volumes"] if v["name"] not in {"source", "content"}]
+        return job
+
+    assert without_storage(s3) == without_storage(local)
+
+
+def test_s3_template_without_buckets_is_refused() -> None:
+    with pytest.raises(ValueError, match="SOURCE_BUCKET"):
+        render_manifest(RUN, options(template=S3_TEMPLATE))
 
 
 def test_values_that_would_break_the_yaml_are_refused() -> None:
@@ -157,3 +199,30 @@ def test_docker_command_mounts_the_local_roots(tmp_path: Path) -> None:
 )
 def test_docker_reaches_a_local_api_through_the_host(api: str, expected: str) -> None:
     assert _docker_api_url(api) == expected
+
+
+def test_docker_command_in_s3_mode_passes_credentials_by_name(tmp_path: Path) -> None:
+    command = docker_command(
+        RUN,
+        DockerOptions(
+            image="ott-transcoder:local",
+            api_url="http://host.docker.internal:8085",
+            job_token="local-dev-job-token",
+            source_root=tmp_path / "src",
+            content_root=tmp_path / "content",
+            s3=S3Options(
+                source_bucket="ott-source",
+                content_bucket="ott-content",
+                region="ap-northeast-2",
+                endpoint_url="http://host.docker.internal:5005",
+            ),
+        ),
+    )
+
+    assert "-v" not in command
+    assert "STORAGE=s3" in command
+    assert "AWS_DEFAULT_REGION=ap-northeast-2" in command
+    assert "S3_ENDPOINT_URL=http://host.docker.internal:5005" in command
+    # 값 없이 이름만: docker가 호스트 환경 변수에서 읽는다
+    assert command[command.index("AWS_SECRET_ACCESS_KEY") - 1] == "-e"
+    assert not any(part.startswith("AWS_SECRET_ACCESS_KEY=") for part in command)
