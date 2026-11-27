@@ -1,0 +1,14 @@
+# EKS(AWS) 공통 값. 계정마다 다른 값(이미지 주소, DB, CloudFront, 버킷, Target Group)은
+# deploy/eks/up.sh가 Terraform 출력에서 읽어 Application의 valuesObject로 넣는다. 저장소가 공개라 계정 ID를 커밋하지 않는다
+api:
+  # E4: 1개와 2개를 비교한다. 기본은 2
+  replicas: 2
+  image:
+    pullPolicy: IfNotPresent
+  storage: s3
+  adminSecret: ott-admin
+  targetGroupBinding:
+    enabled: true
+
+opsCheck:
+  schedule: "*/5 * * * *"

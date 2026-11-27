@@ -45,6 +45,14 @@ spec:
               value: file:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
             - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
               value: "true"
+            {{- with $api.adminSecret }}
+            - name: OTT_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef: { name: {{ . }}, key: email }
+            - name: OTT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ . }}, key: password }
+            {{- end }}
           resources:
             {{- toYaml $api.resources | nindent 12 }}
           securityContext:
@@ -66,7 +74,9 @@ spec:
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
             - { name: signing, mountPath: /var/run/secrets/ott-signing, readOnly: true }
+            {{- if eq $api.storage "local" }}
             - { name: content, mountPath: /data/content, readOnly: true }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -74,7 +84,9 @@ spec:
         - name: signing
           secret:
             secretName: {{ $api.playback.signingSecret }}
+        {{- if eq $api.storage "local" }}
         - name: content
           persistentVolumeClaim:
             claimName: {{ $api.contentClaim }}
             readOnly: true
+        {{- end }}

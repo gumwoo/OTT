@@ -33,8 +33,17 @@ app.kubernetes.io/component: api
   value: {{ required "api.playback.keyPairId is required" $api.playback.keyPairId | quote }}
 - name: OTT_PLAYBACK_SIGNING_PRIVATE_KEY
   value: file:/var/run/secrets/ott-signing/private-key.pem
+{{- if eq $api.storage "s3" }}
+- name: OTT_CONTENT_S3_BUCKET
+  value: {{ required "api.contentBucket is required for s3" $api.contentBucket | quote }}
+- name: OTT_CONTENT_S3_REGION
+  value: {{ required "api.region is required for s3" $api.region | quote }}
+{{- else if eq $api.storage "local" }}
 - name: OTT_CONTENT_LOCAL_ROOT
   value: /data/content
+{{- else }}
+{{- fail "api.storage must be local or s3" }}
+{{- end }}
 {{- end }}
 
 {{- define "ott.opsCheck.selectorLabels" -}}
