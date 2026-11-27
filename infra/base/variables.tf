@@ -39,6 +39,16 @@ variable "existing_github_oidc_provider_arn" {
   default     = null
 }
 
+variable "signing_public_key_path" {
+  description = "api가 Signed Cookie를 서명하는 키의 공개 키(PEM) 경로. /content/*의 trusted key group"
+  type        = string
+}
+
+variable "test_signing_public_key_path" {
+  description = "synthetic 클라이언트용 테스트 공개 키(PEM) 경로. /content/test-*에만 신뢰한다"
+  type        = string
+}
+
 variable "enable_api" {
   description = "true면 /api/*를 compute 스택의 VPC origin으로 보낸다. false면 503 API_MAINTENANCE (design.md §4-1)"
   type        = bool

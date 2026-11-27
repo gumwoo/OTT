@@ -2,6 +2,10 @@
 budget_email       = "you@example.com"
 monthly_budget_usd = 30
 
+# 서명 키 공개 키. 만드는 법은 docs/aws.md "서명 키"
+signing_public_key_path      = "../../.local/aws-signing.pub.pem"
+test_signing_public_key_path = "../../.local/aws-test-signing.pub.pem"
+
 # compute 스택과 api 배포가 끝난 뒤 true. 이 값을 빠뜨리고 apply하면 /api/*가 503으로 돌아간다
 enable_api = false
 
