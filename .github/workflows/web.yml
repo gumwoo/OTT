@@ -1,0 +1,61 @@
+name: web
+
+# main에 들어온 플레이어 앱을 app 버킷에 올린다. 검사는 ci.yml이 PR에서 끝냈다
+on:
+  push:
+    branches: [main]
+    paths: [web/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    # AWS를 만들고 저장소 변수(DEPLOY_ROLE_ARN, APP_BUCKET)를 넣기 전에는 건너뛴다 (docs/aws.md).
+    # 역할 신뢰 조건도 main만 받는다
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    # 늦게 시작한 배포가 먼저 끝나 index.html이 이전 빌드로 돌아가지 않게 하나씩 돈다
+    concurrency:
+      group: web-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-2
+      # 거의 동시에 들어온 push는 대기열 순서가 커밋 순서와 다를 수 있다. 이전 커밋이 index.html을 되돌리지 않게 한다
+      - name: still main HEAD
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main moved to $head; the newer run deploys" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: deploy
+        if: steps.head.outputs.current == 'true'
+        env:
+          APP_BUCKET: ${{ vars.APP_BUCKET }}
+        run: bash web/deploy.sh web/dist "$APP_BUCKET" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -74,6 +74,7 @@ uv run --project scripts/admin ott-admin transcode <contentId> <원본> --source
 
 - api는 `ott.content.local-root`와 `ott.content.s3.bucket` 중 하나만 받는다. local 프로필 위에서는 `--ott.content.local-root=`로 로컬 쪽을 끈다
 - 재생은 확인할 수 없다. 브라우저가 받는 영상은 content-server(`.local/content`)에서 온다
+- 웹 앱 배포 스크립트: `AWS_ENDPOINT_URL=http://localhost:5005 bash web/test/deploy_test.sh` (aws CLI v2 필요. 컨테이너로 돌리면 컨테이너 안의 localhost는 자기 자신이다: `docker run --rm -v "$PWD/web:/web" -e AWS_ENDPOINT_URL=http://host.docker.internal:5005 --entrypoint bash amazon/aws-cli /web/test/deploy_test.sh`)
 
 ## kind
 
