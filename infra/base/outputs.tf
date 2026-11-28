@@ -62,3 +62,8 @@ output "policy_deploy_role_arn" {
   description = "정책 배포 job이 맡는 역할 ARN (github_repo가 없으면 null). 저장소 변수 POLICY_DEPLOY_ROLE_ARN"
   value       = local.enable_github_oidc ? aws_iam_role.policy_deploy[0].arn : null
 }
+
+output "image_push_role_arn" {
+  description = "이미지 푸시 job이 맡는 역할 ARN (github_repo가 없으면 null). 저장소 변수 IMAGE_PUSH_ROLE_ARN"
+  value       = local.enable_github_oidc ? aws_iam_role.image_push[0].arn : null
+}

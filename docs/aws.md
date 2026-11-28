@@ -60,6 +60,19 @@ gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw
 - 첫 배포나 실패 뒤 다시 반영은 `gh workflow run policy.yml --ref main`
 - environment 규칙이 없으면 같은 저장소의 PR 브랜치가 워크플로를 고쳐 이 역할을 맡을 수 있다. 위 두 번째 명령을 빼먹지 않는다
 
+## 이미지 푸시 연결 (base apply 뒤 한 번)
+
+`.github/workflows/images.yml`은 main에 api·transcoder 변경이 들어오면 두 이미지를 커밋 SHA(40자) 태그로 ECR에 올린다. 아래 변수가 없으면 건너뛴다.
+
+```bash
+gh variable set IMAGE_PUSH_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw image_push_role_arn)"
+gh workflow run images.yml --ref main   # 지금 main으로 첫 이미지
+```
+
+- 클러스터 반영은 사람이 한다(아래 "배포"). EKS 엔드포인트가 작업 PC IP에만 열려 있다
+- 같은 SHA를 다시 돌리면 이미 있는 태그는 건너뛴다(IMMUTABLE)
+- ECR은 저장소마다 최근 10개(`ecr_keep_images`)만 남긴다. 쓰고 있는 태그가 그보다 오래되면 노드가 바뀔 때 이미지를 못 받는다. 실험 중에는 새 태그로 `up.sh`를 다시 돈다
+
 ## 웹 앱 배포 연결 (base apply 뒤 한 번)
 
 `.github/workflows/web.yml`은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다. 역할은 base tfvars에 `github_repo`를 넣어야 만들어지고, main에서 돈 job만 받는다.
@@ -99,15 +112,22 @@ terraform -chdir=infra/base apply
 
 ## 배포
 
-ECR 태그는 덮어쓸 수 없다(IMMUTABLE). 커밋 SHA처럼 매번 다른 태그를 쓴다.
+ECR 태그는 덮어쓸 수 없다(IMMUTABLE). 커밋 SHA처럼 매번 다른 태그를 쓴다. 태그는 둘 중 하나로 정한다.
 
 ```bash
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.ap-northeast-2.amazonaws.com
+
+# (가) images.yml이 올린 이미지: 가장 최근에 올라간 api 태그. main HEAD가 아니다(web·docs만 바꾼 커밋은 이미지를 만들지 않는다)
+TAG=$(aws ecr describe-images --region ap-northeast-2 --repository-name ott-api \
+  --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]' --output text)
+aws ecr describe-images --region ap-northeast-2 --repository-name ott-transcoder --image-ids imageTag="$TAG" > /dev/null
+
+# (나) 손으로 올릴 때 (가) 대신
 TAG=$(git rev-parse --short HEAD)
 aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin "$REGISTRY"
-docker build -t "$REGISTRY/ott-api:$TAG" api && docker push "$REGISTRY/ott-api:$TAG"
-docker build -t "$REGISTRY/ott-transcoder:$TAG" transcoder && docker push "$REGISTRY/ott-transcoder:$TAG"
+docker build --provenance=false -t "$REGISTRY/ott-api:$TAG" api && docker push "$REGISTRY/ott-api:$TAG"
+docker build --provenance=false -t "$REGISTRY/ott-transcoder:$TAG" transcoder && docker push "$REGISTRY/ott-transcoder:$TAG"
 
 # 관리자 계정은 로컬처럼 .local/admin.env에서 읽는다(명령줄에 비밀번호를 쓰지 않는다)
 set -a && . .local/admin.env && set +a

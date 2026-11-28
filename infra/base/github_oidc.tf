@@ -141,3 +141,40 @@ resource "aws_iam_role_policy" "policy_deploy" {
   role   = aws_iam_role.policy_deploy[0].id
   policy = data.aws_iam_policy_document.policy_deploy.json
 }
+
+# 이미지 푸시 job 전용. app 버킷 배포 역할과 나눠 각 워크플로가 자기 권한만 갖게 한다
+resource "aws_iam_role" "image_push" {
+  count = local.enable_github_oidc ? 1 : 0
+
+  name               = "${var.project}-image-push"
+  assume_role_policy = data.aws_iam_policy_document.github_trust[0].json
+}
+
+# ECR 사용자 가이드 "IAM permissions for pushing an image". DescribeImages는 이미 올린 태그를 건너뛰는 데 쓴다
+data "aws_iam_policy_document" "image_push" {
+  statement {
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:CompleteLayerUpload",
+      "ecr:DescribeImages",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+    ]
+    resources = [for repo in aws_ecr_repository.this : repo.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "image_push" {
+  count = local.enable_github_oidc ? 1 : 0
+
+  name   = "${var.project}-image-push"
+  role   = aws_iam_role.image_push[0].id
+  policy = data.aws_iam_policy_document.image_push.json
+}

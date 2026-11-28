@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), (7-6 웹 앱 배포)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), (7-6 웹 앱 배포), (7-8 이미지 푸시)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -17,6 +17,7 @@
 | 7-4 정책 배포 파이프라인 | 아래 |
 | 7-5 실험 측정 도구 | 아래 |
 | 7-6 웹 앱 배포 (app 버킷) | 아래 |
+| 7-8 이미지 빌드·ECR 푸시 | 아래 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
 
@@ -449,3 +450,42 @@ ego-browser로 확인 (CloudFront 문서):
 검증하지 못한 것:
 
 - GitHub 러너의 aws CLI 추정 결과(PR CI에서 확인), 실제 app 버킷 업로드와 CloudFront를 거친 응답 헤더, OAC 권한
+
+## 7-8 이미지 빌드·ECR 푸시
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `.github/workflows/images.yml` | main에 api·transcoder 변경이 들어오면 두 이미지를 `docker build` → ECR `ott-{api,transcoder}:<커밋 SHA>`. 이미 있는 태그는 건너뛴다. 저장소 변수가 없으면 job을 건너뛴다 |
+| `infra/base/github_oidc.tf` | 푸시 전용 역할 `ott-image-push`(신뢰 조건은 배포 역할과 같은 main). 출력 `image_push_role_arn` |
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| ADR-0011 "GitHub Actions OIDC → ECR → Argo CD 배포 흐름" | CI는 ECR 푸시까지. Argo CD Application의 태그는 사람이 `API_TAG=<SHA> up.sh`로 바꾼다 | EKS 엔드포인트가 작업 PC IP에만 열려 있어 러너가 클러스터에 닿지 않는다. 태그를 자동으로 따라가려면 Argo CD Image Updater 같은 구성 요소를 하나 더 들여야 한다 | ADR-0011 §4, aws.md |
+
+### 4. 구현하면서 정한 것
+
+- 권한 묶음을 app 버킷 배포 역할과 나눴다. 신뢰 조건(`sub` = main)은 같아서 main에서 도는 워크플로라면 둘 다 맡을 수 있다. AWS의 GitHub OIDC 조건 키가 `aud`·`sub`·`amr`뿐이라(GA-03) 워크플로 단위로는 좁히지 못한다. 권한은 ECR 사용자 가이드 "IAM permissions for pushing an image"의 저장소 단위 6개 + `GetAuthorizationToken`(리소스 `*`)에, 건너뛰기 판단용 `DescribeImages`(ego-browser로 확인)
+- 태그는 40자 커밋 SHA. IMMUTABLE 저장소에 같은 태그를 다시 올리면 `ImageTagAlreadyExistsException`이라(ECR 사용자 가이드 `image-tag-mutability.html`), 다시 돌린 실행은 `DescribeImages`로 먼저 보고 건너뛴다. `ImageNotFoundException`이 아닌 오류(권한 등)는 그대로 실패한다
+- 한쪽만 바뀌어도 두 이미지를 다 올린다. 같은 SHA로 api와 transcoder를 함께 고를 수 있다. 대신 ECR에 최근 10개만 남으므로(`ecr_keep_images`) 쓰는 태그가 밀려나지 않게 aws.md에 적었다
+- `concurrency`를 이미지·SHA 단위로 건다. push 실행과 수동 실행이 같은 SHA로 겹치면 둘 다 "없음"을 보고 빌드하고, 늦게 끝난 쪽이 `ImageTagAlreadyExistsException`으로 실패한다
+- `--provenance=false`. buildx가 attestation을 붙이면 태그 하나가 image index와 manifest 여러 개가 된다. lifecycle `imageCountMoreThan`이 그것을 어떻게 세는지 확인하지 못해, 단일 manifest로 두었다
+- 배포할 태그는 main HEAD가 아니라 ECR에 마지막으로 올라간 태그다. web·docs만 바꾼 커밋은 이미지를 만들지 않는다(aws.md "배포")
+- 실행 요약에는 계정 ID가 든 레지스트리 주소 대신 `저장소:태그`만 남긴다(공개 저장소)
+- 노드가 x86(`t3.large`)이고 러너도 x64라 멀티 아키텍처 빌드를 하지 않는다. 새 action 없이 `docker build`·`docker push`와 `aws ecr get-login-password`
+
+### 5. 검증
+
+검증한 것:
+
+- 워크플로의 `run` 스크립트를 YAML에서 그대로 꺼내 가짜 `aws`·`docker`로 세 경우: 태그 없음 → login·build·push, 태그 있음 → 건너뜀(exit 0), `AccessDeniedException` → exit 1
+- `docker build --provenance=false api`, `... transcoder` 로컬 빌드
+- 독립 검증 에이전트: 건너뛰기 판단의 오류 문자열을 moto + aws CLI 2.42.5 실제 출력(`aws: [ERROR]: An error occurred (ImageNotFoundException) ...`, exit 254)으로 확인. 지적 반영: 배포 태그를 main HEAD로 잡던 문서, 역할 분리에 대한 과장된 설명, 같은 SHA 동시 실행, attestation
+- actionlint, terraform fmt·validate, tflint, trivy
+
+검증하지 못한 것:
+
+- 실제 ECR 푸시와 역할 권한, 러너에서의 api 이미지 빌드 시간
