@@ -208,7 +208,7 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE/deploy/policy:/policy" openpolicyagent/conftest:v0.71.1@sha256:0e77cdf7c1fcde035f3c579e4aaa6664ee2a8be5777eaa9af9f520cdd02280c0 verify -p /policy
           docker run --rm -i -v "$GITHUB_WORKSPACE/deploy/policy:/policy" openpolicyagent/conftest:v0.71.1@sha256:0e77cdf7c1fcde035f3c579e4aaa6664ee2a8be5777eaa9af9f520cdd02280c0 \
             test -p /policy - < "$RUNNER_TEMP/chart.yaml"
-      - run: shellcheck deploy/kind/up.sh deploy/eks/up.sh deploy/eks/down.sh
+      - run: shellcheck deploy/kind/up.sh deploy/eks/up.sh deploy/eks/down.sh deploy/eks/db.sh
 
   infra:
     needs: changes

@@ -43,6 +43,11 @@ output "ecr_repository_urls" {
   value       = { for name, repo in aws_ecr_repository.this : name => repo.repository_url }
 }
 
+output "backup_bucket" {
+  description = "RDS 덤프 버킷 이름 (deploy/eks/db.sh)"
+  value       = aws_s3_bucket.backups.bucket
+}
+
 output "app_bucket" {
   description = "플레이어 앱 버킷 이름"
   value       = aws_s3_bucket.app.bucket
