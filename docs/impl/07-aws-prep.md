@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), (7-6 웹 앱 배포), (7-8 이미지 푸시)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), #60 (7-6 웹 앱 배포), (7-7 RDS 백업·복원), #61 (7-8 이미지 푸시)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -17,6 +17,7 @@
 | 7-4 정책 배포 파이프라인 | 아래 |
 | 7-5 실험 측정 도구 | 아래 |
 | 7-6 웹 앱 배포 (app 버킷) | 아래 |
+| 7-7 RDS 백업·복원 | 아래 |
 | 7-8 이미지 빌드·ECR 푸시 | 아래 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
@@ -450,6 +451,65 @@ ego-browser로 확인 (CloudFront 문서):
 검증하지 못한 것:
 
 - GitHub 러너의 aws CLI 추정 결과(PR CI에서 확인), 실제 app 버킷 업로드와 CloudFront를 거친 응답 헤더, OAC 권한
+
+## 7-7 RDS 백업·복원
+
+### 1. 만든 것
+
+design.md §4-1 "RDS 상태 보존"의 백업·복원·검증.
+
+| 파일 | 하는 일 |
+|---|---|
+| `deploy/eks/db.sh` | `backup`·`restore`·`verify`. 클러스터 안 도구 Pod에서 PostgreSQL 클라이언트를 돌리고 덤프는 작업 PC를 거쳐 S3와 오간다 |
+| `infra/base/s3.tf` | backups 버킷(공개 차단, BucketOwnerEnforced, 버전 관리, 이전 버전 30일 만료, 끊긴 multipart 7일 정리). 출력 `backup_bucket` |
+
+### 2. 흐름
+
+```text
+철거: enable_api=false → backup(진행 중 Job 확인 → pg_dump → 검사 → S3) → verify → down.sh → compute destroy
+생성: compute apply → up.sh → restore(S3 → 검사 → 스키마 교체 한 트랜잭션 → api 재시작) → verify → enable_api=true
+```
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| "`pg_dump` 결과를 S3에" | base에 backups 버킷을 따로 둔다 | 덤프에 비밀번호 해시와 세션이 있다. transcoder 역할은 source 버킷 전체(`source/*`)를 읽는다 | design.md §4-1, aws.md |
+
+### 4. 구현하면서 정한 것
+
+- RDS는 private 서브넷이고 클러스터 SG에서만 받는다. 덤프를 클러스터 안에서 뜨고 `kubectl cp`로 오간다. 새 Pod Identity 역할이 필요 없고, S3 쓰기는 작업 PC의 자격 증명으로 한다
+- 클라이언트 이미지는 compose와 같은 `postgres:17.11-alpine`. `pg_dump`는 서버보다 낮은 메이저 버전이면 안 된다
+- 복원은 `drop schema public cascade; create schema public;`과 덤프 SQL을 `psql --single-transaction` 한 번에 넣는다. api가 빈 DB에 먼저 Flyway를 돌렸어도, 덤프보다 새 마이그레이션의 테이블까지 지워진다
+  - `drop owned by current_user`는 로컬 compose의 `ott`처럼 부트스트랩 슈퍼유저면 시스템 객체에 걸려 실패했다
+  - 덤프 SQL은 먼저 파일로 만든다. `pg_restore | psql`이면 덤프가 깨졌을 때 psql이 지우는 문장만 받고 커밋해 DB가 빈다
+- 덤프 전송은 `kubectl cp`. Windows `kubectl exec -i ... < 파일`이 stdin을 32KB 단위로 잘라 먹고도 exit 0이었다(TS-0013). 첫 로컬 검증은 83KB 덤프라 통과했고, 독립 검증 에이전트가 3MB 덤프로 찾았다
+- 덤프는 Pod·작업 PC·S3 메타데이터(`sha256`) 세 곳의 SHA-256을 맞춘다. 전송이 잘리거나 다른 키를 받으면 복원 전에 멈춘다
+- restore는 api Deployment가 Ready가 될 때까지 기다린 뒤 시작한다. 기동 중인 Flyway와 스키마 교체가 겹치지 않게. 락은 60초(`lock_timeout`)만 기다린다
+- 도구 Pod 이름에 난수를 붙인다. 고정 이름이면 다른 터미널에서 돌던 명령의 Pod를 지운다
+- 백업 전에 `REQUESTED`·`RUNNING`·`VALIDATED`·`UPLOADED` Job이 있으면 멈춘다. 백업 뒤에 게시가 일어나면 복원한 DB와 S3가 어긋난다(design §4-1 1~2단계)
+- verify는 404만 "없음"으로 센다. 권한·연결 오류는 바로 실패한다. 없는 버킷도 HeadObject는 404라서 `head-bucket`을 먼저 본다
+- 도구 Pod는 PSS restricted를 지킨다(uid 70, seccomp RuntimeDefault, capability 전부 제거, 서비스 계정 토큰 없음). 비밀번호는 Secret에서 env로 받아 명령줄에 남지 않는다. 끝나면 지운다
+
+### 5. 검증
+
+kind `ott`(namespace PSS restricted) + compose postgres + moto 5.2.5로 돌렸다. 원본·대상 모두 임시 DB(`DB_URL`로 지정)라 로컬 개발 DB는 읽기만 했다.
+
+검증한 것:
+
+- 2,506,475바이트 덤프(로컬 DB 복사본 + 6만 행 padding 테이블): backup 2회, restore 3회 모두 성공. 미리 만든 `users`(다른 구조)·`v6_extra`가 지워지고, 행 수(users 3, contents 4, qoe_events 1346, padding 60000, flyway 5)와 padding 내용 md5가 원본과 같았다
+- 수정 전 `exec -i` 전송을 3MB로 재현: 3회 모두 32768~98304바이트에서 잘렸고, `kubectl cp`는 3회 모두 해시가 같았다
+- 메타데이터는 맞지만 잘린 덤프(앞 1MB): `pg_restore`에서 멈추고 대상 DB가 그대로(padding 60000행). `sha256` 메타데이터가 없는 덤프는 복원 전에 거부
+- verify: 4개 중 1개를 빼면 `MISSING` 1개와 exit 1, 다 있으면 exit 0, 엔드포인트에 닿지 않거나 버킷이 없으면 MISSING이 아니라 오류
+- 독립 검증 에이전트: CREATEDB만 가진 비슈퍼유저를 DB owner로 둔 DB(RDS 마스터 사용자 흉내)에서 `public` 재생성과 복원이 됐다. 재생성한 `public`을 다시 덤프해 복원해도 된다
+- 진행 중 Job이 있으면 backup 거부, `FORCE=1`이면 진행. 인자 오류는 kubectl보다 먼저 usage(exit 2)
+- shellcheck
+
+검증하지 못한 것:
+
+- RDS(SSL `require`, 마스터 사용자 권한으로 `public` 스키마 재생성), 실제 S3·IAM
+- `restore` 앞뒤의 api 대기·재시작. 로컬에서는 복원 대상이 api의 DB가 아니라서(`DB_URL` 지정 시 건너뛴다) 돌리지 않았다
+- Linux kubectl에서도 `exec -i`가 잘리는지
 
 ## 7-8 이미지 빌드·ECR 푸시
 

@@ -417,7 +417,7 @@ VPC origin은 distribution이 참조하는 동안 삭제할 수 없다. 그래�
 
 S3에 HLS 파일이 남아 있어도 `current_version`이 사라지면 API가 어떤 버전을 반환할지 알 수 없다.
 
-- 철거 전에 `pg_dump` 결과를 S3에 저장하고, 생성 후 시딩 스크립트가 복원한다.
+- 철거 전에 `pg_dump` 결과를 S3(base의 backups 버킷)에 저장하고, 생성 후 시딩 스크립트가 복원한다 (`deploy/eks/db.sh`, docs/aws.md "DB 백업·복원").
 - 복원 후 검증: 모든 공개 콘텐츠의 `current_version`이 S3 content 버킷에 실제로 존재하는 버전 경로를 가리키는지 확인한다.
 - 생성·철거 소요 시간(클러스터, VPC origin, distribution 배포)을 기록한다.
 

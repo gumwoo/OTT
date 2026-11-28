@@ -8,7 +8,7 @@ Terraform은 1.11 이상이어야 한다(S3 네이티브 락, TF-04). CI는 1.16
 
 | 디렉터리 | 수명 | 들어 있는 것 |
 |---|---|---|
-| `infra/base` | 상시 | S3(source, content, app, logs), CloudFront, ECR, 예산 알람, GitHub OIDC, SSM 값 |
+| `infra/base` | 상시 | S3(source, content, app, logs, backups), CloudFront, ECR, 예산 알람, GitHub OIDC, SSM 값 |
 | `infra/compute` | 실험할 때만 | VPC, EKS, internal ALB, CloudFront VPC origin, RDS, Pod Identity 역할 |
 
 스택 사이 값은 SSM Parameter Store(`/ott/base/*`, `/ott/compute/*`)로 넘긴다 (TF-05).
@@ -103,6 +103,10 @@ terraform -chdir=infra/compute apply
 
 # 4. 이미지를 올리고 클러스터에 컨트롤러·Argo CD·api를 배포한다 (아래 "배포")
 
+# 4-1. 철거 때 남긴 덤프가 있으면 복원하고 공개 버전을 확인한다 (아래 "DB 백업·복원")
+bash deploy/eks/db.sh restore "$(terraform -chdir=infra/base output -raw backup_bucket)" backups/db/<시각>.dump
+bash deploy/eks/db.sh verify "$(terraform -chdir=infra/base output -raw content_bucket)"
+
 # 5. base tfvars에서 enable_api = true로 바꾸고 apply. /api/*를 VPC origin으로 연결
 terraform -chdir=infra/base apply
 ```
@@ -155,11 +159,14 @@ uv run --project scripts/admin ott-admin --api http://localhost:8086 transcode <
 
 ## 철거
 
-design.md §4-1 순서를 따른다. 진행 중인 변환이 없는지 먼저 확인하고(`ott-admin job`), RDS는 `pg_dump`를 S3에 남긴다.
+design.md §4-1 순서를 따른다. 진행 중인 변환이 없는지 먼저 확인한다(`ott-admin job`).
 
 ```bash
 # base tfvars enable_api = false → apply. VPC origin 참조를 풀고 distribution이 Deployed가 될 때까지 기다린다
 terraform -chdir=infra/base apply
+# RDS 덤프를 남기고 공개 버전이 S3에 있는지 본다. api Deployment에서 DB 주소를 읽으므로 down.sh보다 먼저
+bash deploy/eks/db.sh backup "$(terraform -chdir=infra/base output -raw backup_bucket)"
+bash deploy/eks/db.sh verify "$(terraform -chdir=infra/base output -raw content_bucket)"
 # Argo CD Application을 지워 TargetGroupBinding까지 지운다 (design.md §13)
 bash deploy/eks/down.sh
 # compute tfvars enable_vpc_origin_sg_only = false → apply. ALB SG가 서비스 SG를 참조한 채로 지우지 않는다
@@ -168,4 +175,17 @@ terraform -chdir=infra/compute destroy
 ```
 
 - 서비스 SG 참조를 먼저 푸는 것은 예방 조치다. 참조한 채로 destroy했을 때 실패하는지는 확인하지 않았다
-- base는 지우지 않는다. 지우려면 S3 버킷을 먼저 비워야 한다
+- base는 지우지 않는다. 지우려면 S3 버킷을 먼저 비워야 한다. backups 버킷은 버전 관리를 켜서 이전 버전과 delete marker까지 지워야 한다
+
+## DB 백업·복원
+
+`deploy/eks/db.sh`. RDS는 클러스터 안에서만 닿으므로 `ott` namespace에 도구 Pod(`postgres:17.11-alpine`)를 띄워 `pg_dump`·`pg_restore`·`psql`을 돌리고, 덤프는 작업 PC를 거쳐 backups 버킷과 오간다. 접속 정보는 api Deployment의 `SPRING_DATASOURCE_URL`과 Secret `ott-db`에서 읽는다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `backup <backups 버킷> [키]` | 진행 중인 변환 Job이 있으면 멈춘다(`FORCE=1`로 무시). `pg_dump -Fc` → `pg_restore --list`로 읽히는지 → 양쪽 SHA-256 비교 → S3(메타데이터 `sha256`). 기본 키 `backups/db/<UTC 시각>.dump` |
+| `restore <backups 버킷> <키>` | 받은 덤프가 백업 때 남긴 `sha256`과 같은지 본다(없으면 멈춘다). api가 Ready가 될 때까지 기다린 뒤 `public` 스키마를 지우고 덤프로 채운다. 한 트랜잭션이라 실패하면 그대로 남는다. 끝나면 api를 다시 띄워 덤프 뒤의 마이그레이션을 Flyway가 적용하게 한다 |
+| `verify <content 버킷>` | 버킷이 있는지 먼저 보고, `current_version`이 있는 콘텐츠마다 `content/{id}/v{n}/master.m3u8`이 있는지. 하나라도 없으면 exit 1 |
+
+- 덤프에는 비밀번호 해시와 세션이 들어 있다. 그래서 Pod 역할이 읽는 source·content 버킷이 아니라 backups 버킷에 둔다. 버전 관리를 켰고, 이전 버전은 30일 뒤 지운다
+- 복원은 `enable_api = false`인 동안(4-1단계) 한다. 그때는 api에 요청이 들어오지 않는다

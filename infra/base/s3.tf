@@ -169,3 +169,57 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
     }
   }
 }
+
+# RDS 덤프 (design.md §4-1). 비밀번호 해시와 세션이 들어 있어 Pod 역할이 읽는 source·content와 나눈다
+resource "aws_s3_bucket" "backups" {
+  bucket = "${var.project}-backups-${local.bucket_suffix}"
+}
+
+resource "aws_s3_bucket_public_access_block" "backups" {
+  bucket                  = aws_s3_bucket.backups.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+# 같은 키에 덮어쓰거나 지워도 이전 덤프를 되살릴 수 있게
+resource "aws_s3_bucket_versioning" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+
+    # 8MB를 넘으면 aws cli가 multipart로 올린다. 끊긴 업로드의 part도 과금된다
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.backups]
+}
