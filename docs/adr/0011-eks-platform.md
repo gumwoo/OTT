@@ -146,7 +146,7 @@ CloudFront VPC origin은 실제 ALB 리소스를 참조한다. Ingress가 ALB를
 | 워크로드 유형별 Helm 템플릿과 CI 검증 | Pod 스케줄링, Job 재시도 (Kubernetes) |
 | Transcode Job: 변환·검증·게시·조건부 공개 로직 | ALB ↔ Pod 연결 (AWS Load Balancer Controller) |
 | 장애 주입 스크립트, 측정 클라이언트 | 노드 확장·축소 (Cluster Autoscaler) |
-| GitHub Actions OIDC → ECR → Argo CD 배포 흐름 | CloudFront ↔ VPC 사설 연결 (VPC origin) |
+| GitHub Actions OIDC → ECR → Argo CD 배포 흐름 (태그 반영은 `up.sh`, impl/07 §7-8) | CloudFront ↔ VPC 사설 연결 (VPC origin) |
 
 ## 5. 검증 결과
 

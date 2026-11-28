@@ -1,0 +1,62 @@
+name: images
+
+# main에 들어온 api·transcoder 이미지를 커밋 SHA 태그로 ECR에 올린다.
+# 클러스터 반영은 사람이 한다(API_TAG=<SHA> bash deploy/eks/up.sh). EKS 엔드포인트가 작업 PC IP에만 열려 있다
+on:
+  push:
+    branches: [main]
+    paths: [api/**, transcoder/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  push:
+    # AWS를 만들고 저장소 변수(IMAGE_PUSH_ROLE_ARN)를 넣기 전에는 건너뛴다 (docs/aws.md). 역할 신뢰 조건도 main만 받는다
+    if: github.ref == 'refs/heads/main' && vars.IMAGE_PUSH_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    # 한쪽만 바뀌어도 둘 다 올린다. 같은 SHA로 api와 transcoder를 함께 고를 수 있게
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, transcoder]
+    # push와 수동 실행이 같은 SHA로 겹치면 늦게 끝난 쪽이 태그 충돌로 실패한다. 뒤 실행은 기다렸다가 건너뛴다
+    concurrency:
+      group: images-${{ matrix.image }}-${{ github.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.IMAGE_PUSH_ROLE_ARN }}
+          aws-region: ap-northeast-2
+      - name: build and push
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          registry="$account.dkr.ecr.ap-northeast-2.amazonaws.com"
+          repo="ott-$IMAGE"
+          ref="$registry/$repo:$GITHUB_SHA"
+          # 태그를 덮어쓸 수 없다(IMMUTABLE). 다시 돌린 실행은 이미 올린 태그를 건너뛴다
+          if out=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag="$GITHUB_SHA" 2>&1); then
+            echo "already pushed: $repo:$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          elif [[ $out != *ImageNotFoundException* ]]; then
+            echo "$out" >&2
+            exit 1
+          fi
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          # attestation을 붙이면 태그 하나가 manifest 여러 개가 되어 lifecycle(최근 N개)이 세는 수가 달라질 수 있다
+          docker build --provenance=false -t "$ref" "$IMAGE"
+          docker push "$ref"
+          # 공개 저장소라 요약에는 계정 ID가 든 레지스트리 주소를 남기지 않는다
+          echo "pushed: $repo:$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
