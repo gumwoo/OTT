@@ -60,6 +60,19 @@ gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw
 - 첫 배포나 실패 뒤 다시 반영은 `gh workflow run policy.yml --ref main`
 - environment 규칙이 없으면 같은 저장소의 PR 브랜치가 워크플로를 고쳐 이 역할을 맡을 수 있다. 위 두 번째 명령을 빼먹지 않는다
 
+## 웹 앱 배포 연결 (base apply 뒤 한 번)
+
+`.github/workflows/web.yml`은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다. 역할은 base tfvars에 `github_repo`를 넣어야 만들어지고, main에서 돈 job만 받는다.
+
+```bash
+gh variable set DEPLOY_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw github_deploy_role_arn)"
+gh variable set APP_BUCKET --body "$(terraform -chdir=infra/base output -raw app_bucket)"
+gh workflow run web.yml --ref main   # 첫 배포. 이후로는 main에 web 변경이 들어올 때마다
+```
+
+- 손으로 올릴 때: `(cd web && npm ci && npm run build) && bash web/deploy.sh web/dist "$(terraform -chdir=infra/base output -raw app_bucket)"`
+- CloudFront 무효화는 하지 않는다. `index.html`은 `no-cache`라 엣지에 최소 TTL(1초)만 남는다
+
 ## 생성
 
 ```bash

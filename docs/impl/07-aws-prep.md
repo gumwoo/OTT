@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), (7-5 측정 도구)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), (7-6 웹 앱 배포)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -16,6 +16,7 @@
 | 7-3 국가별 Edge 정책 함수 | 아래 |
 | 7-4 정책 배포 파이프라인 | 아래 |
 | 7-5 실험 측정 도구 | 아래 |
+| 7-6 웹 앱 배포 (app 버킷) | 아래 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
 
@@ -408,3 +409,43 @@ ego-browser로 확인 (CloudFront 문서):
 검증하지 못한 것:
 
 - 실제 CloudFront가 이 쿠키를 받아들이는지(서명·SHA-256 검증), 국가별 출발 IP에서의 측정
+
+## 7-6 웹 앱 배포
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `web/deploy.sh` | `dist/`를 app 버킷에 올린다. `assets/`(해시 파일) → 나머지 → `index.html` 순서, 파일 종류별 `Cache-Control` |
+| `web/test/deploy_test.sh` | 실제 aws CLI로 moto에 올려 Content-Type·Cache-Control, 다시 배포하면 새 빌드를 가리키는지, 이전 청크가 남는지, 잘못된 입력 거부를 본다 |
+| `.github/workflows/web.yml` | main에 web 변경이 들어오면 빌드해서 배포 역할(`ott-github-deploy`)로 올린다. 저장소 변수가 없으면 건너뛴다 |
+| `.github/workflows/ci.yml` web job | moto 서비스 컨테이너를 띄우고 러너의 aws CLI로 위 테스트를 돌린다 |
+
+### 4. 구현하면서 정한 것
+
+| 경로 | Cache-Control | 이유 |
+|---|---|---|
+| `assets/*` | `public, max-age=31536000, immutable` | 파일 이름에 내용 해시가 있다 |
+| `index.html` | `no-cache` | 새 빌드를 바로 가리켜야 한다 |
+| 그 밖(`artwork/` 등) | `public, max-age=3600` | 이름이 고정이라 오래 두면 바꿔도 안 보인다 |
+
+- CloudFront 무효화를 하지 않는다. 기본 동작의 캐시 정책(`CachingOptimized`)은 최소 TTL이 1초이고, 최소 TTL이 0보다 크면 CloudFront는 `no-cache`가 있어도 최소 TTL만큼 캐시한다(CloudFront 개발자 가이드 "Manage how long content stays in the cache", ego-browser로 확인). `index.html`은 엣지에 1초만 남는다
+- `--delete`를 쓰지 않는다. 이전 `index.html`을 연 탭이 나중에 `PlayerPage-*.js` 같은 지연 로딩 청크를 받으러 온다. 버킷에 이전 해시 파일이 쌓인다. 지금 빌드 한 번이 4.6MB다(로컬 `du -sh web/dist`)
+- Content-Type은 aws CLI의 추정에 맡긴다(`--no-guess-mime-type`을 주지 않으면 추정, aws CLI `s3 sync` 문서). 추정이 실행 환경의 MIME 표에 따라 다를 수 있어서 CI에서 배포와 같은 러너 이미지(ubuntu-24.04)의 aws CLI로 테스트한다
+- 배포는 `concurrency`로 하나씩. 앞선 배포가 늦게 끝나 `index.html`을 이전 빌드로 되돌리지 않게 한다
+- 배포 직전에 이 커밋이 아직 main HEAD인지 본다. 거의 동시에 들어온 push는 대기열 순서가 커밋 순서와 다를 수 있어서, 이전 커밋이 나중에 돌면 `index.html`이 되돌아간다. HEAD가 아니면 배포 단계만 건너뛴다(최신 실행이 올린다)
+- main push 배포는 main의 ci.yml 결과를 기다리지 않는다. PR CI를 통과한 squash merge만 main에 들어온다는 전제다
+- 역할 신뢰 조건이 `ref:refs/heads/main`이라 다른 브랜치에서 `workflow_dispatch`해도 자격 증명을 못 받는다. job 조건에도 main을 적어 실패 대신 건너뛰게 했다
+
+### 5. 검증
+
+검증한 것:
+
+- 독립 검증 에이전트 지적 반영: 최종 헤더만 봐서 업로드 순서와 두 번째 sync의 `index.html` 제외가 틀려도 통과하던 테스트(mutant로 재현됨) → aws 호출 기록 shim으로 검사, 동시 push 순서, development.md의 컨테이너 명령
+- `web/test/deploy_test.sh` 13개 통과: `amazon/aws-cli`(aws-cli 2.42.5) 컨테이너 → moto 5.2.5
+- 실제 빌드(`npm run build`, 104개 파일)를 moto에 올려 헤더를 셌다: woff2 92개 `font/woff2`·immutable, jpg 8개 `image/jpeg`·3600, css 1·js 2 immutable(`text/css`, `text/javascript`), html 1 `no-cache`
+- shellcheck, actionlint
+
+검증하지 못한 것:
+
+- GitHub 러너의 aws CLI 추정 결과(PR CI에서 확인), 실제 app 버킷 업로드와 CloudFront를 거친 응답 헤더, OAC 권한
