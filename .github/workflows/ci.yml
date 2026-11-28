@@ -90,6 +90,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
+    services:
+      moto:
+        image: motoserver/moto:5.2.5
+        ports: ["5000:5000"]
     defaults:
       run:
         working-directory: web
@@ -106,6 +110,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: shellcheck deploy.sh test/deploy_test.sh
+      # 러너의 aws CLI로 돌린다. web.yml이 같은 CLI로 올리므로 Content-Type 추정까지 확인된다
+      - run: bash test/deploy_test.sh
+        env:
+          AWS_ENDPOINT_URL: http://localhost:5000
 
   transcoder:
     needs: changes

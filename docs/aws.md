@@ -60,6 +60,32 @@ gh variable set POLICY_KVS_ARN --body "$(terraform -chdir=infra/base output -raw
 - 첫 배포나 실패 뒤 다시 반영은 `gh workflow run policy.yml --ref main`
 - environment 규칙이 없으면 같은 저장소의 PR 브랜치가 워크플로를 고쳐 이 역할을 맡을 수 있다. 위 두 번째 명령을 빼먹지 않는다
 
+## 이미지 푸시 연결 (base apply 뒤 한 번)
+
+`.github/workflows/images.yml`은 main에 api·transcoder 변경이 들어오면 두 이미지를 커밋 SHA(40자) 태그로 ECR에 올린다. 아래 변수가 없으면 건너뛴다.
+
+```bash
+gh variable set IMAGE_PUSH_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw image_push_role_arn)"
+gh workflow run images.yml --ref main   # 지금 main으로 첫 이미지
+```
+
+- 클러스터 반영은 사람이 한다(아래 "배포"). EKS 엔드포인트가 작업 PC IP에만 열려 있다
+- 같은 SHA를 다시 돌리면 이미 있는 태그는 건너뛴다(IMMUTABLE)
+- ECR은 저장소마다 최근 10개(`ecr_keep_images`)만 남긴다. 쓰고 있는 태그가 그보다 오래되면 노드가 바뀔 때 이미지를 못 받는다. 실험 중에는 새 태그로 `up.sh`를 다시 돈다
+
+## 웹 앱 배포 연결 (base apply 뒤 한 번)
+
+`.github/workflows/web.yml`은 아래 저장소 변수가 있어야 돈다. 없으면 건너뛴다. 역할은 base tfvars에 `github_repo`를 넣어야 만들어지고, main에서 돈 job만 받는다.
+
+```bash
+gh variable set DEPLOY_ROLE_ARN --body "$(terraform -chdir=infra/base output -raw github_deploy_role_arn)"
+gh variable set APP_BUCKET --body "$(terraform -chdir=infra/base output -raw app_bucket)"
+gh workflow run web.yml --ref main   # 첫 배포. 이후로는 main에 web 변경이 들어올 때마다
+```
+
+- 손으로 올릴 때: `(cd web && npm ci && npm run build) && bash web/deploy.sh web/dist "$(terraform -chdir=infra/base output -raw app_bucket)"`
+- CloudFront 무효화는 하지 않는다. `index.html`은 `no-cache`라 엣지에 최소 TTL(1초)만 남는다
+
 ## 생성
 
 ```bash
@@ -90,15 +116,22 @@ terraform -chdir=infra/base apply
 
 ## 배포
 
-ECR 태그는 덮어쓸 수 없다(IMMUTABLE). 커밋 SHA처럼 매번 다른 태그를 쓴다.
+ECR 태그는 덮어쓸 수 없다(IMMUTABLE). 커밋 SHA처럼 매번 다른 태그를 쓴다. 태그는 둘 중 하나로 정한다.
 
 ```bash
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGISTRY=$ACCOUNT.dkr.ecr.ap-northeast-2.amazonaws.com
+
+# (가) images.yml이 올린 이미지: 가장 최근에 올라간 api 태그. main HEAD가 아니다(web·docs만 바꾼 커밋은 이미지를 만들지 않는다)
+TAG=$(aws ecr describe-images --region ap-northeast-2 --repository-name ott-api \
+  --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]' --output text)
+aws ecr describe-images --region ap-northeast-2 --repository-name ott-transcoder --image-ids imageTag="$TAG" > /dev/null
+
+# (나) 손으로 올릴 때 (가) 대신
 TAG=$(git rev-parse --short HEAD)
 aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin "$REGISTRY"
-docker build -t "$REGISTRY/ott-api:$TAG" api && docker push "$REGISTRY/ott-api:$TAG"
-docker build -t "$REGISTRY/ott-transcoder:$TAG" transcoder && docker push "$REGISTRY/ott-transcoder:$TAG"
+docker build --provenance=false -t "$REGISTRY/ott-api:$TAG" api && docker push "$REGISTRY/ott-api:$TAG"
+docker build --provenance=false -t "$REGISTRY/ott-transcoder:$TAG" transcoder && docker push "$REGISTRY/ott-transcoder:$TAG"
 
 # 관리자 계정은 로컬처럼 .local/admin.env에서 읽는다(명령줄에 비밀번호를 쓰지 않는다)
 set -a && . .local/admin.env && set +a
@@ -142,7 +175,7 @@ terraform -chdir=infra/compute destroy
 ```
 
 - 서비스 SG 참조를 먼저 푸는 것은 예방 조치다. 참조한 채로 destroy했을 때 실패하는지는 확인하지 않았다
-- base는 지우지 않는다. 지우려면 S3 버킷을 먼저 비워야 한다
+- base는 지우지 않는다. 지우려면 S3 버킷을 먼저 비워야 한다. backups 버킷은 버전 관리를 켜서 이전 버전과 delete marker까지 지워야 한다
 
 ## DB 백업·복원
 
@@ -150,9 +183,9 @@ terraform -chdir=infra/compute destroy
 
 | 명령 | 하는 일 |
 |---|---|
-| `backup <backups 버킷> [키]` | 진행 중인 변환 Job이 있으면 멈춘다(`FORCE=1`로 무시). `pg_dump -Fc` → `pg_restore --list`로 읽히는지 → 양쪽 SHA-256 비교 → S3. 기본 키 `backups/db/<UTC 시각>.dump` |
-| `restore <backups 버킷> <키>` | `public` 스키마를 지우고 덤프로 채운다. 한 트랜잭션이라 실패하면 그대로 남는다. 끝나면 api를 다시 띄워 덤프 뒤의 마이그레이션을 Flyway가 적용하게 한다 |
-| `verify <content 버킷>` | `current_version`이 있는 콘텐츠마다 `content/{id}/v{n}/master.m3u8`이 있는지. 하나라도 없으면 exit 1 |
+| `backup <backups 버킷> [키]` | 진행 중인 변환 Job이 있으면 멈춘다(`FORCE=1`로 무시). `pg_dump -Fc` → `pg_restore --list`로 읽히는지 → 양쪽 SHA-256 비교 → S3(메타데이터 `sha256`). 기본 키 `backups/db/<UTC 시각>.dump` |
+| `restore <backups 버킷> <키>` | 받은 덤프가 백업 때 남긴 `sha256`과 같은지 본다(없으면 멈춘다). api가 Ready가 될 때까지 기다린 뒤 `public` 스키마를 지우고 덤프로 채운다. 한 트랜잭션이라 실패하면 그대로 남는다. 끝나면 api를 다시 띄워 덤프 뒤의 마이그레이션을 Flyway가 적용하게 한다 |
+| `verify <content 버킷>` | 버킷이 있는지 먼저 보고, `current_version`이 있는 콘텐츠마다 `content/{id}/v{n}/master.m3u8`이 있는지. 하나라도 없으면 exit 1 |
 
 - 덤프에는 비밀번호 해시와 세션이 들어 있다. 그래서 Pod 역할이 읽는 source·content 버킷이 아니라 backups 버킷에 둔다. 버전 관리를 켰고, 이전 버전은 30일 뒤 지운다
 - 복원은 `enable_api = false`인 동안(4-1단계) 한다. 그때는 api에 요청이 들어오지 않는다

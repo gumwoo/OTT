@@ -3,7 +3,7 @@
 - 단계: app-design.md §12 7번
 - 기간: 2026-11-27 ~
 - 모듈: api, transcoder, scripts/admin, deploy
-- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), (7-7 RDS 백업·복원)
+- PR: #50 (7-1 S3 저장소 어댑터), #53 (7-2 Terraform), #54 (7-2b EKS 배포), #55 (7-3 Edge 정책), #56 (7-4 정책 파이프라인), #59 (7-5 측정 도구), #60 (7-6 웹 앱 배포), (7-7 RDS 백업·복원), #61 (7-8 이미지 푸시)
 - 관련: design.md §4 "업로드 응답 유실과 412"
 
 7번은 AWS에 올리기 전에 로컬에서 끝낼 코드다. 하위 작업마다 PR을 나누고 이 문서에 이어 쓴다.
@@ -16,7 +16,9 @@
 | 7-3 국가별 Edge 정책 함수 | 아래 |
 | 7-4 정책 배포 파이프라인 | 아래 |
 | 7-5 실험 측정 도구 | 아래 |
+| 7-6 웹 앱 배포 (app 버킷) | 아래 |
 | 7-7 RDS 백업·복원 | 아래 |
+| 7-8 이미지 빌드·ECR 푸시 | 아래 |
 
 ## 7-1 S3 저장소 어댑터 (#50)
 
@@ -410,6 +412,46 @@ ego-browser로 확인 (CloudFront 문서):
 
 - 실제 CloudFront가 이 쿠키를 받아들이는지(서명·SHA-256 검증), 국가별 출발 IP에서의 측정
 
+## 7-6 웹 앱 배포
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `web/deploy.sh` | `dist/`를 app 버킷에 올린다. `assets/`(해시 파일) → 나머지 → `index.html` 순서, 파일 종류별 `Cache-Control` |
+| `web/test/deploy_test.sh` | 실제 aws CLI로 moto에 올려 Content-Type·Cache-Control, 다시 배포하면 새 빌드를 가리키는지, 이전 청크가 남는지, 잘못된 입력 거부를 본다 |
+| `.github/workflows/web.yml` | main에 web 변경이 들어오면 빌드해서 배포 역할(`ott-github-deploy`)로 올린다. 저장소 변수가 없으면 건너뛴다 |
+| `.github/workflows/ci.yml` web job | moto 서비스 컨테이너를 띄우고 러너의 aws CLI로 위 테스트를 돌린다 |
+
+### 4. 구현하면서 정한 것
+
+| 경로 | Cache-Control | 이유 |
+|---|---|---|
+| `assets/*` | `public, max-age=31536000, immutable` | 파일 이름에 내용 해시가 있다 |
+| `index.html` | `no-cache` | 새 빌드를 바로 가리켜야 한다 |
+| 그 밖(`artwork/` 등) | `public, max-age=3600` | 이름이 고정이라 오래 두면 바꿔도 안 보인다 |
+
+- CloudFront 무효화를 하지 않는다. 기본 동작의 캐시 정책(`CachingOptimized`)은 최소 TTL이 1초이고, 최소 TTL이 0보다 크면 CloudFront는 `no-cache`가 있어도 최소 TTL만큼 캐시한다(CloudFront 개발자 가이드 "Manage how long content stays in the cache", ego-browser로 확인). `index.html`은 엣지에 1초만 남는다
+- `--delete`를 쓰지 않는다. 이전 `index.html`을 연 탭이 나중에 `PlayerPage-*.js` 같은 지연 로딩 청크를 받으러 온다. 버킷에 이전 해시 파일이 쌓인다. 지금 빌드 한 번이 4.6MB다(로컬 `du -sh web/dist`)
+- Content-Type은 aws CLI의 추정에 맡긴다(`--no-guess-mime-type`을 주지 않으면 추정, aws CLI `s3 sync` 문서). 추정이 실행 환경의 MIME 표에 따라 다를 수 있어서 CI에서 배포와 같은 러너 이미지(ubuntu-24.04)의 aws CLI로 테스트한다
+- 배포는 `concurrency`로 하나씩. 앞선 배포가 늦게 끝나 `index.html`을 이전 빌드로 되돌리지 않게 한다
+- 배포 직전에 이 커밋이 아직 main HEAD인지 본다. 거의 동시에 들어온 push는 대기열 순서가 커밋 순서와 다를 수 있어서, 이전 커밋이 나중에 돌면 `index.html`이 되돌아간다. HEAD가 아니면 배포 단계만 건너뛴다(최신 실행이 올린다)
+- main push 배포는 main의 ci.yml 결과를 기다리지 않는다. PR CI를 통과한 squash merge만 main에 들어온다는 전제다
+- 역할 신뢰 조건이 `ref:refs/heads/main`이라 다른 브랜치에서 `workflow_dispatch`해도 자격 증명을 못 받는다. job 조건에도 main을 적어 실패 대신 건너뛰게 했다
+
+### 5. 검증
+
+검증한 것:
+
+- 독립 검증 에이전트 지적 반영: 최종 헤더만 봐서 업로드 순서와 두 번째 sync의 `index.html` 제외가 틀려도 통과하던 테스트(mutant로 재현됨) → aws 호출 기록 shim으로 검사, 동시 push 순서, development.md의 컨테이너 명령
+- `web/test/deploy_test.sh` 13개 통과: `amazon/aws-cli`(aws-cli 2.42.5) 컨테이너 → moto 5.2.5
+- 실제 빌드(`npm run build`, 104개 파일)를 moto에 올려 헤더를 셌다: woff2 92개 `font/woff2`·immutable, jpg 8개 `image/jpeg`·3600, css 1·js 2 immutable(`text/css`, `text/javascript`), html 1 `no-cache`
+- shellcheck, actionlint
+
+검증하지 못한 것:
+
+- GitHub 러너의 aws CLI 추정 결과(PR CI에서 확인), 실제 app 버킷 업로드와 CloudFront를 거친 응답 헤더, OAC 권한
+
 ## 7-7 RDS 백업·복원
 
 ### 1. 만든 것
@@ -419,7 +461,7 @@ design.md §4-1 "RDS 상태 보존"의 백업·복원·검증.
 | 파일 | 하는 일 |
 |---|---|
 | `deploy/eks/db.sh` | `backup`·`restore`·`verify`. 클러스터 안 도구 Pod에서 PostgreSQL 클라이언트를 돌리고 덤프는 작업 PC를 거쳐 S3와 오간다 |
-| `infra/base/s3.tf` | backups 버킷(공개 차단, BucketOwnerEnforced, 버전 관리, 이전 버전 30일 만료). 출력 `backup_bucket` |
+| `infra/base/s3.tf` | backups 버킷(공개 차단, BucketOwnerEnforced, 버전 관리, 이전 버전 30일 만료, 끊긴 multipart 7일 정리). 출력 `backup_bucket` |
 
 ### 2. 흐름
 
@@ -436,30 +478,74 @@ design.md §4-1 "RDS 상태 보존"의 백업·복원·검증.
 
 ### 4. 구현하면서 정한 것
 
-- RDS는 private 서브넷이고 클러스터 SG에서만 받는다. 덤프를 클러스터 안에서 뜨고 `kubectl exec`로 꺼낸다. 새 Pod Identity 역할이 필요 없고, S3 쓰기는 작업 PC의 자격 증명으로 한다
+- RDS는 private 서브넷이고 클러스터 SG에서만 받는다. 덤프를 클러스터 안에서 뜨고 `kubectl cp`로 오간다. 새 Pod Identity 역할이 필요 없고, S3 쓰기는 작업 PC의 자격 증명으로 한다
 - 클라이언트 이미지는 compose와 같은 `postgres:17.11-alpine`. `pg_dump`는 서버보다 낮은 메이저 버전이면 안 된다
 - 복원은 `drop schema public cascade; create schema public;`과 덤프 SQL을 `psql --single-transaction` 한 번에 넣는다. api가 빈 DB에 먼저 Flyway를 돌렸어도, 덤프보다 새 마이그레이션의 테이블까지 지워진다
   - `drop owned by current_user`는 로컬 compose의 `ott`처럼 부트스트랩 슈퍼유저면 시스템 객체에 걸려 실패했다
   - 덤프 SQL은 먼저 파일로 만든다. `pg_restore | psql`이면 덤프가 깨졌을 때 psql이 지우는 문장만 받고 커밋해 DB가 빈다
-- 덤프는 Pod와 작업 PC 양쪽 SHA-256을 비교한다. `kubectl exec` 스트림이 바이너리를 바꾸면 잡는다
+- 덤프 전송은 `kubectl cp`. Windows `kubectl exec -i ... < 파일`이 stdin을 32KB 단위로 잘라 먹고도 exit 0이었다(TS-0013). 첫 로컬 검증은 83KB 덤프라 통과했고, 독립 검증 에이전트가 3MB 덤프로 찾았다
+- 덤프는 Pod·작업 PC·S3 메타데이터(`sha256`) 세 곳의 SHA-256을 맞춘다. 전송이 잘리거나 다른 키를 받으면 복원 전에 멈춘다
+- restore는 api Deployment가 Ready가 될 때까지 기다린 뒤 시작한다. 기동 중인 Flyway와 스키마 교체가 겹치지 않게. 락은 60초(`lock_timeout`)만 기다린다
+- 도구 Pod 이름에 난수를 붙인다. 고정 이름이면 다른 터미널에서 돌던 명령의 Pod를 지운다
 - 백업 전에 `REQUESTED`·`RUNNING`·`VALIDATED`·`UPLOADED` Job이 있으면 멈춘다. 백업 뒤에 게시가 일어나면 복원한 DB와 S3가 어긋난다(design §4-1 1~2단계)
-- verify는 404만 "없음"으로 센다. 권한·연결 오류는 바로 실패한다. 없는 것을 있다고, 오류를 없다고 보고하지 않게
+- verify는 404만 "없음"으로 센다. 권한·연결 오류는 바로 실패한다. 없는 버킷도 HeadObject는 404라서 `head-bucket`을 먼저 본다
 - 도구 Pod는 PSS restricted를 지킨다(uid 70, seccomp RuntimeDefault, capability 전부 제거, 서비스 계정 토큰 없음). 비밀번호는 Secret에서 env로 받아 명령줄에 남지 않는다. 끝나면 지운다
 
 ### 5. 검증
 
-kind `ott`(namespace PSS restricted) + compose postgres + moto 5.2.5로 돌렸다. 복원 대상은 임시 DB `ott_restore_test`(`DB_URL`로 지정)라 로컬 개발 DB는 읽기만 했다.
+kind `ott`(namespace PSS restricted) + compose postgres + moto 5.2.5로 돌렸다. 원본·대상 모두 임시 DB(`DB_URL`로 지정)라 로컬 개발 DB는 읽기만 했다.
 
 검증한 것:
 
-- backup: 83,212바이트 덤프를 moto에 저장(22초)
-- restore: 미리 만든 `users`(다른 구조)·`v6_extra` 테이블이 지워지고, 테이블 7개 행 수(users 3, contents 4, playback_sessions 34, qoe_events 1346 등)와 `users` 내용 md5가 원본과 같았다. 두 번 복원해도 같다
-- 잘린 덤프(앞 40,000바이트): `pg_restore`에서 멈추고 대상 DB가 그대로 남았다
-- verify: 4개 중 1개를 빼면 `MISSING` 1개와 exit 1, 다 있으면 exit 0, 엔드포인트에 닿지 않으면 MISSING이 아니라 오류
+- 2,506,475바이트 덤프(로컬 DB 복사본 + 6만 행 padding 테이블): backup 2회, restore 3회 모두 성공. 미리 만든 `users`(다른 구조)·`v6_extra`가 지워지고, 행 수(users 3, contents 4, qoe_events 1346, padding 60000, flyway 5)와 padding 내용 md5가 원본과 같았다
+- 수정 전 `exec -i` 전송을 3MB로 재현: 3회 모두 32768~98304바이트에서 잘렸고, `kubectl cp`는 3회 모두 해시가 같았다
+- 메타데이터는 맞지만 잘린 덤프(앞 1MB): `pg_restore`에서 멈추고 대상 DB가 그대로(padding 60000행). `sha256` 메타데이터가 없는 덤프는 복원 전에 거부
+- verify: 4개 중 1개를 빼면 `MISSING` 1개와 exit 1, 다 있으면 exit 0, 엔드포인트에 닿지 않거나 버킷이 없으면 MISSING이 아니라 오류
+- 독립 검증 에이전트: CREATEDB만 가진 비슈퍼유저를 DB owner로 둔 DB(RDS 마스터 사용자 흉내)에서 `public` 재생성과 복원이 됐다. 재생성한 `public`을 다시 덤프해 복원해도 된다
 - 진행 중 Job이 있으면 backup 거부, `FORCE=1`이면 진행. 인자 오류는 kubectl보다 먼저 usage(exit 2)
 - shellcheck
 
 검증하지 못한 것:
 
 - RDS(SSL `require`, 마스터 사용자 권한으로 `public` 스키마 재생성), 실제 S3·IAM
-- `restore` 끝의 api 재시작. 로컬에서는 복원 대상이 api의 DB가 아니라서(`DB_URL` 지정 시 재시작하지 않는다) 돌리지 않았다
+- `restore` 앞뒤의 api 대기·재시작. 로컬에서는 복원 대상이 api의 DB가 아니라서(`DB_URL` 지정 시 건너뛴다) 돌리지 않았다
+- Linux kubectl에서도 `exec -i`가 잘리는지
+
+## 7-8 이미지 빌드·ECR 푸시
+
+### 1. 만든 것
+
+| 파일 | 하는 일 |
+|---|---|
+| `.github/workflows/images.yml` | main에 api·transcoder 변경이 들어오면 두 이미지를 `docker build` → ECR `ott-{api,transcoder}:<커밋 SHA>`. 이미 있는 태그는 건너뛴다. 저장소 변수가 없으면 job을 건너뛴다 |
+| `infra/base/github_oidc.tf` | 푸시 전용 역할 `ott-image-push`(신뢰 조건은 배포 역할과 같은 main). 출력 `image_push_role_arn` |
+
+### 3. 설계와 달라진 점
+
+| 설계 | 실제 구현 | 이유 | 반영한 문서 |
+|---|---|---|---|
+| ADR-0011 "GitHub Actions OIDC → ECR → Argo CD 배포 흐름" | CI는 ECR 푸시까지. Argo CD Application의 태그는 사람이 `API_TAG=<SHA> up.sh`로 바꾼다 | EKS 엔드포인트가 작업 PC IP에만 열려 있어 러너가 클러스터에 닿지 않는다. 태그를 자동으로 따라가려면 Argo CD Image Updater 같은 구성 요소를 하나 더 들여야 한다 | ADR-0011 §4, aws.md |
+
+### 4. 구현하면서 정한 것
+
+- 권한 묶음을 app 버킷 배포 역할과 나눴다. 신뢰 조건(`sub` = main)은 같아서 main에서 도는 워크플로라면 둘 다 맡을 수 있다. AWS의 GitHub OIDC 조건 키가 `aud`·`sub`·`amr`뿐이라(GA-03) 워크플로 단위로는 좁히지 못한다. 권한은 ECR 사용자 가이드 "IAM permissions for pushing an image"의 저장소 단위 6개 + `GetAuthorizationToken`(리소스 `*`)에, 건너뛰기 판단용 `DescribeImages`(ego-browser로 확인)
+- 태그는 40자 커밋 SHA. IMMUTABLE 저장소에 같은 태그를 다시 올리면 `ImageTagAlreadyExistsException`이라(ECR 사용자 가이드 `image-tag-mutability.html`), 다시 돌린 실행은 `DescribeImages`로 먼저 보고 건너뛴다. `ImageNotFoundException`이 아닌 오류(권한 등)는 그대로 실패한다
+- 한쪽만 바뀌어도 두 이미지를 다 올린다. 같은 SHA로 api와 transcoder를 함께 고를 수 있다. 대신 ECR에 최근 10개만 남으므로(`ecr_keep_images`) 쓰는 태그가 밀려나지 않게 aws.md에 적었다
+- `concurrency`를 이미지·SHA 단위로 건다. push 실행과 수동 실행이 같은 SHA로 겹치면 둘 다 "없음"을 보고 빌드하고, 늦게 끝난 쪽이 `ImageTagAlreadyExistsException`으로 실패한다
+- `--provenance=false`. buildx가 attestation을 붙이면 태그 하나가 image index와 manifest 여러 개가 된다. lifecycle `imageCountMoreThan`이 그것을 어떻게 세는지 확인하지 못해, 단일 manifest로 두었다
+- 배포할 태그는 main HEAD가 아니라 ECR에 마지막으로 올라간 태그다. web·docs만 바꾼 커밋은 이미지를 만들지 않는다(aws.md "배포")
+- 실행 요약에는 계정 ID가 든 레지스트리 주소 대신 `저장소:태그`만 남긴다(공개 저장소)
+- 노드가 x86(`t3.large`)이고 러너도 x64라 멀티 아키텍처 빌드를 하지 않는다. 새 action 없이 `docker build`·`docker push`와 `aws ecr get-login-password`
+
+### 5. 검증
+
+검증한 것:
+
+- 워크플로의 `run` 스크립트를 YAML에서 그대로 꺼내 가짜 `aws`·`docker`로 세 경우: 태그 없음 → login·build·push, 태그 있음 → 건너뜀(exit 0), `AccessDeniedException` → exit 1
+- `docker build --provenance=false api`, `... transcoder` 로컬 빌드
+- 독립 검증 에이전트: 건너뛰기 판단의 오류 문자열을 moto + aws CLI 2.42.5 실제 출력(`aws: [ERROR]: An error occurred (ImageNotFoundException) ...`, exit 254)으로 확인. 지적 반영: 배포 태그를 main HEAD로 잡던 문서, 역할 분리에 대한 과장된 설명, 같은 SHA 동시 실행, attestation
+- actionlint, terraform fmt·validate, tflint, trivy
+
+검증하지 못한 것:
+
+- 실제 ECR 푸시와 역할 권한, 러너에서의 api 이미지 빌드 시간
